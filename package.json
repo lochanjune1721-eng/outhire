@@ -7,6 +7,6 @@
     "seed:sql": "node scripts/make-seed-sql.mjs",
     "photos:check": "node scripts/fetch-photos.js --check",
     "photos:links": "node scripts/fetch-photos.js --link-only",
-    "photos": "node scripts/fetch-photos.js"
+    "photos": "node scripts/fetch-photos.js --tmdb"
   }
 }

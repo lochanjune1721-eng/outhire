@@ -105,44 +105,70 @@ face, gold on surface, which is a deliberate part of the design rather than a
 gap. To fill them in:
 
 ```bash
-node scripts/fetch-photos.js --check        # what resolves; writes nothing
-node scripts/fetch-photos.js --link-only    # fast: point at Commons directly
+node scripts/fetch-photos.js --check          # what resolves; writes nothing
 npm install sharp
-node scripts/fetch-photos.js                # full: download, 800x800, cache
+node scripts/fetch-photos.js --tmdb           # the real run
 ```
 
-`--link-only` finishes in minutes, needs no `sharp` and no storage, and gets
-pictures on the board today. It points `photo_path` at Commons URLs, so the
-images are hotlinked — fine at launch traffic, but run the full mode before you
-have real traffic, because Wikimedia asks people not to hotlink at scale and you
-get no control over sizing or availability.
+**Fetch once and store them yourself.** The full run downloads each image,
+crops it to 800×800 — the same crop the cards use — and pushes it to Supabase
+storage. There is a `--link-only` mode that points `photo_path` straight at the
+source instead; it is a two-minute way to see the boards populated, but it
+hotlinks, which is slow for visitors and something Wikimedia asks people not to
+do at scale. Don't launch on it.
 
-Useful flags: `--only=greatest-footballer`, `--limit=200`, `--concurrency=6`,
+Flags: `--only=greatest-footballer`, `--limit=200`, `--concurrency=6`,
 `--force` (redo people who already have one).
 
-Three things make this survivable across 2,926 names:
+### Where the images come from
 
-- **Batched.** Title lookups go 50 at a time, so a full run is roughly 700 API
-  calls rather than ~5,900.
-- **Resumable.** Anyone who already has a photo is skipped, so an interrupted
-  run costs nothing — just start it again.
-- **Search fallback.** Exact-title lookup misses plenty of these (`1996 Chicago
-  Bulls`, `Pizza`, `MrBeast`), so anything not found by title is searched for.
+Four resolvers, in order, each only handling what the previous one missed:
 
-Licences are verified before anything is stored. Commons mixes freely reusable
-files with fair-use ones, and a fair-use portrait on a site where people spend
-money is a real problem, not a cosmetic one. Anything unverifiable is skipped,
-that person keeps their initials, and every miss is written to
-`photo-misses.json` with the reason so you can fill the ones that matter in
-`/admin.html`.
+1. **TMDB** (`--tmdb`, needs `TMDB_API_KEY`) for the thirteen screen boards —
+   actors, directors, films, TV, anime, 260 names. Commons is thin and
+   inconsistent here: group shots, premieres, the occasional statue. TMDB has
+   proper portraits and posters. On a test board this took coverage from 90% to
+   95%, and the images are far better than the percentage suggests.
+2. **Wikipedia `pageimages`**, batched 50 titles per request — the article's
+   lead image, which is usually the best portrait available.
+3. **Wikipedia REST summary** (`/api/rest_v1/page/summary/…`) for stragglers.
+   One call, no key, and it resolves awkward titles more forgivingly than the
+   query API.
+4. **Wikipedia search** for whatever is still missing.
 
-Expect real coverage to be partial. People and clubs resolve well; dishes,
-cuisines and single-year team lineups often do not. That is what the initials
-tile is for.
+Two things make this survivable across 2,926 names: lookups are **batched**, so
+a full pass is roughly 700 API calls rather than ~5,900; and it **resumes** —
+anyone who already has a photo is skipped, so an interrupted run costs nothing.
+
+### Licensing
+
+Commons images are checked before anything is stored. Commons mixes freely
+reusable files with fair-use ones, and a fair-use portrait on a site where
+people spend money is a real problem, not a cosmetic one. Anything unverifiable
+is skipped and that person keeps their initials. The artist and licence are
+stored with every photo and rendered on the person page.
+
+**TMDB is a different licensing situation and worth a decision, not a shrug.**
+Its images are studio and agency copyright served under TMDB's terms, not
+CC-BY-SA, so they bypass the Commons licence gate and are credited to TMDB.
+That is how most apps use TMDB, but this site takes money, so satisfy yourself
+that it is acceptable for your use before turning `--tmdb` on.
+
+### Expect to finish it by hand
+
+Realistically you get partial coverage, and some of what lands will be group
+shots or poor crops. Every miss goes to `photo-misses.json` with its reason.
+Budget an evening in `/admin.html` swapping the bad ones — that is the
+difference between looking made and looking scraped.
+
+A sport-specific API would do for footballers what TMDB does for actors. I have
+not built one: the free tiers mostly omit images, and their licensing is less
+clear than either Commons or TMDB, so it needs a look at actual terms rather
+than a guess. The resolver chain is a list — adding one is a single function.
 
 **`sharp` is deliberately not a dependency.** The deployed site has none at all
 — the serverless functions use `fetch` and `node:crypto` only — so install it ad
-hoc when you want the full photo pass and leave the deploy clean.
+hoc for the photo run and leave the deploy clean.
 
 ## One thing I could not verify
 

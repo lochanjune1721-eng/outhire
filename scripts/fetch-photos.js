@@ -44,6 +44,24 @@ const LIMIT = Number(val('limit') || 0);
 const CONC = Math.max(1, Math.min(8, Number(val('concurrency') || 4)));
 
 const WIKI = process.env.WIKI_API || 'https://en.wikipedia.org/w/api.php';
+const WIKI_REST = process.env.WIKI_REST || 'https://en.wikipedia.org/api/rest_v1';
+const TMDB_API = process.env.TMDB_API || 'https://api.themoviedb.org/3';
+const TMDB_IMG = (process.env.TMDB_IMG || 'https://image.tmdb.org/t/p/w780').replace(/\/$/, '');
+const TMDB_KEY = process.env.TMDB_API_KEY || '';
+const USE_TMDB = has('tmdb');
+
+/* Commons is thin and inconsistent on screen work — group shots, premieres,
+   the odd statue. TMDB has proper portraits and posters for exactly these
+   boards, so when --tmdb is on they are tried there first and fall back to
+   Wikipedia. 260 names sit in these thirteen boards. */
+const TMDB_KIND = {
+  'greatest-hollywood-actor': 'person', 'greatest-hollywood-actress': 'person',
+  'greatest-bollywood-actor': 'person', 'greatest-bollywood-actress': 'person',
+  'greatest-korean-actor': 'person',    'greatest-film-director': 'person',
+  'greatest-comedian': 'person',
+  'greatest-film': 'movie',             'greatest-animated-film': 'movie',
+  'greatest-tv-show': 'tv',             'greatest-anime': 'tv'
+};
 const COMMONS = process.env.COMMONS_API || 'https://commons.wikimedia.org/w/api.php';
 const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -107,10 +125,50 @@ async function leadImages(names) {
   for (const n of names) {
     const p = find(n);
     if (p && p.missing === undefined && p.pageimage && p.thumbnail?.source) {
-      out.set(n, { file: p.pageimage, url: p.thumbnail.source, title: p.title });
+      out.set(n, { file: p.pageimage, url: p.thumbnail.source, title: p.title, source: 'wiki' });
     }
   }
   return out;
+}
+
+/* Wikipedia's REST summary endpoint: one call, no key, and it resolves titles
+   more forgivingly than the query API. The thumbnail comes back at whatever
+   width Wikipedia picked, so bump the standard Commons "NNNpx-" segment to the
+   800px the big cards want. */
+async function restSummary(name) {
+  const title = encodeURIComponent(String(name).replace(/ /g, '_'));
+  let res;
+  try { res = await fetch(`${WIKI_REST}/page/summary/${title}`, { headers: { 'User-Agent': UA } }); }
+  catch { return null; }
+  if (!res.ok) return null;
+  const d = await res.json().catch(() => null);
+  const src = d?.thumbnail?.source;
+  if (!src) return null;
+  const file = decodeURIComponent(
+    (d.originalimage?.source || src).split('/').pop().replace(/^\d+px-/, '')
+  );
+  return { file, url: src.replace(/\/\d+px-/, '/800px-'), title: d.title, source: 'wiki' };
+}
+
+/** TMDB portraits and posters. Its images carry TMDB's terms, not a Commons
+    licence, so they skip the Commons check and are credited to TMDB. */
+async function tmdbLookup(kind, name) {
+  if (!TMDB_KEY) return null;
+  const url = `${TMDB_API}/search/${kind}?` +
+    new URLSearchParams({ api_key: TMDB_KEY, query: name, include_adult: 'false' });
+  let res;
+  try { res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } }); }
+  catch { return null; }
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  const hit = body?.results?.[0];
+  const path = kind === 'person' ? hit?.profile_path : hit?.poster_path;
+  if (!path) return null;
+  return {
+    url: TMDB_IMG + path, source: 'tmdb',
+    credit: 'The Movie Database (TMDB)',
+    licence: 'TMDB terms of use'
+  };
 }
 
 /** Search fallback, one name at a time — only for what exact titles missed. */
@@ -121,7 +179,7 @@ async function searchImage(name) {
   });
   const p = Object.values(body?.query?.pages || {})[0];
   if (p && p.pageimage && p.thumbnail?.source) {
-    return { file: p.pageimage, url: p.thumbnail.source, title: p.title };
+    return { file: p.pageimage, url: p.thumbnail.source, title: p.title, source: 'wiki' };
   }
   return null;
 }
@@ -241,31 +299,52 @@ async function main() {
   if (LIMIT) todo = todo.slice(0, LIMIT);
   console.log(`${todo.length} to look up across ${boards.length} board(s)\n`);
 
-  // 1. exact titles, 50 at a time
   const resolved = new Map();
-  for (const group of chunk(todo, 50)) {
+
+  // 0. TMDB first for the screen boards, where Commons is weakest.
+  if (USE_TMDB) {
+    if (!TMDB_KEY) {
+      console.log('--tmdb given but TMDB_API_KEY is unset; skipping TMDB.\n');
+    } else {
+      const screen = todo.filter((t) => TMDB_KIND[t.board]);
+      let n = 0;
+      await pool(screen, CONC, async (t) => {
+        const hit = await tmdbLookup(TMDB_KIND[t.board], t.name);
+        if (hit) resolved.set(t.slug, hit);
+        progress(`TMDB… ${++n}/${screen.length}`);
+      });
+      if (TTY) console.log('');
+      console.log(`resolved ${resolved.size}/${screen.length} from TMDB`);
+    }
+  }
+
+  // 1. exact titles, 50 at a time
+  const needWiki = todo.filter((t) => !resolved.has(t.slug));
+  let byTitle = 0;
+  for (const group of chunk(needWiki, 50)) {
     const hits = await leadImages(group.map((t) => t.name));
-    for (const t of group) if (hits.has(t.name)) resolved.set(t.slug, hits.get(t.name));
-    progress(`resolving titles… ${resolved.size}/${todo.length}`);
+    for (const t of group) if (hits.has(t.name)) { resolved.set(t.slug, hits.get(t.name)); byTitle++; }
+    progress(`resolving titles… ${byTitle}/${needWiki.length}`);
     await sleep(120);
   }
   if (TTY) console.log('');
-  console.log(`resolved ${resolved.size} by exact title`);
+  console.log(`resolved ${byTitle} by exact title`);
 
-  // 2. search fallback for the rest
+  // 2. REST summary, then search, for whatever is still missing
   const unresolved = todo.filter((t) => !resolved.has(t.slug));
-  let searched = 0;
+  let tried = 0, bySummary = 0, bySearch = 0;
   await pool(unresolved, CONC, async (t) => {
-    const hit = await searchImage(t.name);
+    let hit = await restSummary(t.name);
+    if (hit) bySummary++;
+    else { hit = await searchImage(t.name); if (hit) bySearch++; }
     if (hit) resolved.set(t.slug, hit);
-    searched++;
-    progress(`searching the rest… ${searched}/${unresolved.length}`);
+    progress(`filling gaps… ${++tried}/${unresolved.length}`);
   });
   if (TTY) console.log('');
-  console.log(`resolved ${searched ? resolved.size : 0} total after search fallback`);
+  console.log(`resolved ${bySummary} more via REST summary, ${bySearch} via search`);
 
-  // 3. licences, 50 files at a time
-  const files = [...new Set([...resolved.values()].map((v) => v.file))];
+  // 3. licences, 50 files at a time — only for what came from Commons
+  const files = [...new Set([...resolved.values()].filter((v) => v.source === 'wiki').map((v) => v.file))];
   const lic = new Map();
   for (const group of chunk(files, 50)) {
     const got = await licences(group);
@@ -284,8 +363,12 @@ async function main() {
 
   await pool(work, CONC, async (t) => {
     const hit = resolved.get(t.slug);
-    const meta = lic.get(hit.file);
-    if (!meta || !licenceOk(meta.licence)) {
+    // TMDB images carry TMDB's terms and their own attribution, so the Commons
+    // licence gate does not apply to them.
+    const meta = hit.source === 'tmdb'
+      ? { licence: hit.licence, author: hit.credit }
+      : lic.get(hit.file);
+    if (!meta || (hit.source !== 'tmdb' && !licenceOk(meta.licence))) {
       badLicence++;
       misses.push({ ...t, why: `licence not verifiable (${meta?.licence || 'unknown'})` });
       return;
@@ -310,7 +393,7 @@ async function main() {
   const pct = todo.length ? Math.round((usable / todo.length) * 100) : 0;
   console.log(`\nusable ${usable}/${todo.length} (${pct}%)   ` +
               `no image ${todo.length - usable - badLicence}   licence unverifiable ${badLicence}`);
-  if (!CHECK) console.log(`stored ${stored}` + (LINK_ONLY ? ' as Commons links' : ' in the photos bucket'));
+  if (!CHECK) console.log(`stored ${stored}` + (LINK_ONLY ? ' as remote links' : ' in the photos bucket'));
 
   if (misses.length) {
     writeFileSync(new URL('../photo-misses.json', import.meta.url), JSON.stringify(misses, null, 2));
