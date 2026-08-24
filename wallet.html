@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet — GOAT.lol</title>
+<meta name="theme-color" content="#0F0E0C">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-nav="">
+<a class="skip" href="#main">Skip to content</a>
+<header data-header></header>
+
+<main id="main"><div class="wrap-narrow page">
+  <div id="signed-out">
+    <h1>Sign in</h1>
+    <p class="lede">An email link, no password. You need an account to hold credit and to appear on fan leaderboards.</p>
+    <div class="panel" style="margin-top:24px">
+      <form id="login-form">
+        <div class="field" style="margin-top:0"><label for="email">Email</label><input id="email" type="email" autocomplete="email" required></div>
+        <div id="login-error" class="notice notice-bad hide"></div>
+        <div style="margin-top:16px"><button class="btn btn-gold" type="submit" id="send">Send the link</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="signed-in" class="hide">
+    <h1>Wallet</h1>
+    <div class="panel" style="margin-top:22px">
+      <p class="muted" style="font-size:13px">Balance</p>
+      <p class="bigtotal" id="bal">$0</p>
+      <p class="muted" style="font-size:13px;margin-top:8px">Credit never expires and is <b>non-refundable</b>. Once loaded, $1 minimum per bid, whole dollars only.</p>
+      <div class="amounts" id="amounts"></div>
+      <div id="pay-error" class="notice notice-bad hide"></div>
+      <div style="margin-top:16px"><button class="btn btn-gold btn-lg" type="button" id="topup">Add credit</button></div>
+    </div>
+
+    <div class="panel">
+      <h2>Your name on fan boards</h2>
+      <div class="field" style="margin-top:0"><label for="dname">Display name or X handle</label><input id="dname" type="text" maxlength="40" placeholder="@handle"></div>
+      <label class="check" style="margin-top:12px"><input id="anon" type="checkbox"> Stay anonymous</label>
+      <div style="margin-top:14px"><button class="btn" type="button" id="save-profile">Save</button> <span class="muted" id="profile-note" style="font-size:13px"></span></div>
+    </div>
+
+    <div class="panel">
+      <h2>History</h2>
+      <div class="tablewrap"><table class="list"><thead><tr><th>What</th><th>Amount</th><th>When</th></tr></thead><tbody id="history"><tr><td colspan="3" class="muted">Loading.</td></tr></tbody></table></div>
+    </div>
+
+    <div style="margin-top:20px"><button class="btn" type="button" id="signout">Sign out</button></div>
+  </div>
+</div></main>
+<footer data-footer></footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="/js/config.js"></script><script src="/js/supabase.js"></script>
+<script src="/js/wallet.js"></script>
+</body>
+</html>

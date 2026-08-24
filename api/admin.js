@@ -1,67 +1,69 @@
-/* POST /api/admin — the password is compared here, never in the browser.
- * A successful login returns a short-lived HMAC token so the password itself
- * is not held in the page. */
+/* POST /api/admin — password checked here, never in the browser.
+ * Photo swaps, deletes, and adding names during the manual review pass. */
 import {
-  json, bad, readJson, db, env, constantTimeEqual, mintAdminToken, checkAdminToken,
-  safeUrl, slugify, randomToken, siteUrl, CATEGORIES, HEADLINE_MAX
+  json, bad, readJson, db, env, constantTimeEqual, mintAdminToken, checkAdminToken
 } from './_lib.js';
 
 export default async function handler(request) {
   if (request.method !== 'POST') return bad('Use POST.', 405);
-
   try {
     const b = await readJson(request);
 
     if (b.action === 'login') {
-      if (!constantTimeEqual(b.password, env('ADMIN_PASSWORD'))) {
-        return bad('That password was not accepted.', 401);
-      }
+      if (!constantTimeEqual(b.password, env('ADMIN_PASSWORD'))) return bad('Not accepted.', 401);
       return json({ token: mintAdminToken() });
     }
-
     if (!checkAdminToken(b.token)) return bad('Your admin token expired. Sign in again.', 401);
 
     if (b.action === 'list') {
-      const status = ['pending', 'live', 'rejected'].includes(b.status) ? b.status : 'pending';
-      const entries = await db.select(
-        'entries',
-        `${db.eq('status', status)}&order=created_at.desc&limit=200`
-      );
-      return json({ entries });
+      const cat = await db.one('categories', db.eq('slug', String(b.slug || '')));
+      if (!cat) return bad('No such board.', 404);
+      const people = await db.select('people',
+        `${db.eq('category_id', cat.id)}&order=total_cents.desc,name.asc&limit=200`);
+      return json({ category: cat, people });
     }
 
-    if (b.action === 'approve' || b.action === 'reject') {
-      if (!b.id) return bad('No entry named.');
-      await db.update('entries', db.eq('id', b.id), {
-        status: b.action === 'approve' ? 'live' : 'rejected'
+    if (b.action === 'update') {
+      if (!b.id) return bad('No person named.');
+      const patch = {};
+      ['name', 'blurb', 'photo_path', 'photo_credit', 'photo_license', 'wikipedia_url'].forEach((k) => {
+        if (typeof b[k] === 'string') patch[k] = b[k].trim() || null;
       });
+      if (!Object.keys(patch).length) return bad('Nothing to change.');
+      await db.update('people', db.eq('id', b.id), patch);
       return json({ ok: true });
     }
 
-    if (b.action === 'grant') {
-      const display_name = String(b.display_name || '').trim().slice(0, 80);
-      const headline = String(b.headline || '').trim();
-      const url = safeUrl(b.url);
-      const side = b.side === 'recruiter' ? 'recruiter' : 'candidate';
-      const category = CATEGORIES.includes(b.category) ? b.category : 'Other';
+    if (b.action === 'delete') {
+      if (!b.id) return bad('No person named.');
+      const person = await db.one('people', db.eq('id', b.id));
+      if (!person) return bad('Already gone.', 404);
+      // Refuse to delete anyone holding real money — that money is public and
+      // permanent, and deleting the row would silently erase it.
+      if (person.total_cents > 0) {
+        return bad('That entry has money on it. Contributions are permanent, so it cannot be deleted.');
+      }
+      await db.del('fan_totals', db.eq('person_id', b.id));
+      await db.del('people', db.eq('id', b.id));
+      return json({ ok: true });
+    }
 
-      if (!display_name) return bad('A name is required.');
-      if (!headline) return bad('A one-liner is required.');
-      if (headline.length > HEADLINE_MAX) return bad(`The one-liner is capped at ${HEADLINE_MAX} characters.`);
-      if (!url) return bad('A valid URL is required.');
-
-      let slug = slugify(display_name, 'entry');
-      if (await db.one('entries', db.eq('slug', slug))) slug = `${slug}-${randomToken(3).toLowerCase()}`;
-
-      const token = randomToken(24);
-      await db.insert('entries', {
-        slug, side, display_name, headline, url,
-        email: String(b.email || '').trim().toLowerCase() || null,
-        category, photo_path: `pending/${slug}.jpg`,
-        current_bid_cents: 0, status: 'pending', upload_token: token
+    if (b.action === 'add') {
+      const cat = await db.one('categories', db.eq('slug', String(b.slug || '')));
+      if (!cat) return bad('No such board.', 404);
+      const name = String(b.name || '').trim();
+      if (!name) return bad('A name is required.');
+      const slug = name.toLowerCase().normalize('NFKD')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'person';
+      const taken = await db.one('people', db.eq('slug', slug));
+      await db.insert('people', {
+        slug: taken ? `${slug}-${Math.random().toString(36).slice(2, 6)}` : slug,
+        category_id: cat.id,
+        name,
+        blurb: String(b.blurb || '').trim() || null,
+        wikipedia_url: String(b.wikipedia_url || '').trim() || null
       });
-
-      return json({ ok: true, slug, upload_url: `${siteUrl(request)}/upload.html?token=${encodeURIComponent(token)}` });
+      return json({ ok: true });
     }
 
     return bad('Unknown action.');

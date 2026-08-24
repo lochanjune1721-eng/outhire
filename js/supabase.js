@@ -1,11 +1,12 @@
-/* outbid.lol — Supabase client, shared queries, formatting.
- * Everything here is public data read with the anon key under RLS. The only
- * client writes are the `clicks` insert and the record_visit() RPC.
- * Candidate emails are not selectable with this key -- see sql/schema.sql. */
+/* GOAT.lol — client, auth, shared queries, formatting, and the header shell.
+ *
+ * The client never writes a balance. It reads public tables under RLS and
+ * calls exactly four RPCs: me(), set_profile(), place_bid(), add_person().
+ */
 (function () {
   'use strict';
 
-  var cfg = window.OUTBID_CONFIG || {};
+  var cfg = window.GOAT_CONFIG || {};
   var configured =
     typeof cfg.SUPABASE_URL === 'string' && cfg.SUPABASE_URL.indexOf('http') === 0 &&
     typeof cfg.SUPABASE_ANON_KEY === 'string' && cfg.SUPABASE_ANON_KEY.length > 20;
@@ -16,69 +17,12 @@
   }
   var OFFLINE = !sb;
 
-  /* --------------------------------------------------------------------
-     CATEGORIES — fixed list, so the board does not fragment into
-     near-duplicate roles.
-     -------------------------------------------------------------------- */
+  var TOPUPS = [500, 1000, 2500, 5000, 10000];
 
-  var CATEGORIES = [
-    'SEO', 'Agents', 'AI Media', 'Marketing', 'Developer', 'Productivity',
-    'People', 'Design', 'Engineering', 'Data', 'Sales', 'Content',
-    'Product', 'Growth', 'Ops', 'Founding', 'Internship', 'Other'
-  ];
-
-  /* --------------------------------------------------------------------
-     JOB SOURCE WHITELIST — mirrored in api/parse-job.js, which is the
-     copy that actually gates board creation. This one only gives the user
-     an answer before a round trip.
-     -------------------------------------------------------------------- */
-
-  var JOB_HOSTS = [
-    'linkedin.com', 'wellfound.com', 'angel.co', 'workatastartup.com',
-    'lever.co', 'greenhouse.io', 'ashbyhq.com', 'workable.com', 'breezy.hr',
-    'indeed.com', 'glassdoor.com', 'naukri.com', 'instahyre.com', 'cutshort.io'
-  ];
-
-  function jobHostAllowed(raw) {
-    var u = safeUrl(raw);
-    if (!u) return false;
-    var host;
-    try { host = new URL(u).hostname.toLowerCase().replace(/^www\./, ''); } catch (e) { return false; }
-    return JOB_HOSTS.some(function (h) { return host === h || host.endsWith('.' + h); });
-  }
-
-  /* --------------------------------------------------------------------
-     FORMATTING
-     -------------------------------------------------------------------- */
+  /* ------------------------------ format --------------------------------- */
 
   function money(cents) { return '$' + Math.round((cents || 0) / 100).toLocaleString('en-US'); }
   function int(n) { return (n || 0).toLocaleString('en-US'); }
-
-  // Claim price for a row: its bid plus a dollar, never below the $5 floor.
-  function claimCents(entry) {
-    return Math.max(500, (entry && entry.current_bid_cents ? entry.current_bid_cents : 0) + 100);
-  }
-
-  function timeAgo(when) {
-    if (!when) return 'just now';
-    var secs = Math.max(0, (Date.now() - new Date(when).getTime()) / 1000);
-    if (secs < 60) return Math.floor(secs) + 's ago';
-    var m = secs / 60; if (m < 60) return Math.floor(m) + 'm ago';
-    var h = m / 60; if (h < 24) return Math.floor(h) + 'h ago';
-    var d = h / 24; if (d < 30) return Math.floor(d) + 'd ago';
-    return Math.floor(d / 30) + 'mo ago';
-  }
-
-  function longAgo(when) {
-    if (!when) return 'just now';
-    var mins = Math.max(0, (Date.now() - new Date(when).getTime()) / 60000);
-    if (mins < 1) return 'seconds ago';
-    if (mins < 60) return Math.floor(mins) + (Math.floor(mins) === 1 ? ' minute ago' : ' minutes ago');
-    var h = mins / 60;
-    if (h < 24) return Math.floor(h) + (Math.floor(h) === 1 ? ' hour ago' : ' hours ago');
-    var d = Math.floor(h / 24);
-    return d + (d === 1 ? ' day ago' : ' days ago');
-  }
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -86,28 +30,32 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  // Only ever emit http(s) hrefs.
   function safeUrl(u) {
     if (!u) return null;
-    var s = String(u).trim();
-    if (!/^https?:\/\//i.test(s)) {
-      if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) s = 'https://' + s;
-      else return null;
-    }
     try {
-      var p = new URL(s);
-      if (p.protocol !== 'http:' && p.protocol !== 'https:') return null;
-      return p.href;
+      var p = new URL(String(u).trim());
+      return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : null;
     } catch (e) { return null; }
   }
 
-  function domainOf(u) {
-    var s = safeUrl(u);
-    if (!s) return '';
-    try { return new URL(s).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
+  function ago(when) {
+    if (!when) return 'just now';
+    var s = Math.max(0, (Date.now() - new Date(when).getTime()) / 1000);
+    if (s < 60) return 'seconds ago';
+    var m = s / 60;
+    if (m < 60) return Math.floor(m) + (Math.floor(m) === 1 ? ' minute ago' : ' minutes ago');
+    var h = m / 60;
+    if (h < 24) return Math.floor(h) + (Math.floor(h) === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.floor(h / 24);
+    return d + (d === 1 ? ' day ago' : ' days ago');
   }
 
-  function qs(name) { return new URLSearchParams(window.location.search).get(name); }
+  function qs(n) { return new URLSearchParams(window.location.search).get(n); }
+
+  function initials(name) {
+    return String(name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(function (w) { return w[0]; }).join('').toUpperCase() || '?';
+  }
 
   function photoUrl(path) {
     if (!path) return null;
@@ -116,175 +64,205 @@
     return cfg.SUPABASE_URL.replace(/\/$/, '') + '/storage/v1/object/public/photos/' + path;
   }
 
-  /* --------------------------------------------------------------------
-     VIDEO — thumbnail first, iframe only on click. Forty iframes on one
-     page is what makes a board like this crawl.
-     -------------------------------------------------------------------- */
-
-  function parseVideo(raw) {
-    var u = safeUrl(raw);
-    if (!u) return null;
-    var yt = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
-    if (yt) return { platform: 'youtube', id: yt[1] };
-    var vm = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
-    if (vm) return { platform: 'vimeo', id: vm[1] };
-    return null;
+  /* Every photo goes through here, so the treatment is impossible to skip.
+     A missing photo renders initials, which has to look deliberate. */
+  function photo(person, opts) {
+    opts = opts || {};
+    var url = photoUrl(person && person.photo_path);
+    var cls = 'ph' + (opts.plain ? ' plain' : '') + (opts.className ? ' ' + opts.className : '');
+    var cap = opts.caption ? '<span class="cap">' + esc(opts.caption) + '</span>' : '';
+    var inner = url
+      ? '<img src="' + esc(url) + '" alt="' + esc(person.name || '') + '" loading="lazy" decoding="async" ' +
+        'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),' +
+        '{className:\'initials\',textContent:this.dataset.i}))" data-i="' + esc(initials(person.name)) + '">'
+      : '<div class="initials">' + esc(initials(person && person.name)) + '</div>';
+    return '<div class="' + cls + '"' + (opts.style ? ' style="' + opts.style + '"' : '') + '>' + inner + cap + '</div>';
   }
 
-  function videoThumb(v) {
-    if (!v) return null;
-    if (v.platform === 'youtube') return 'https://i.ytimg.com/vi/' + v.id + '/hqdefault.jpg';
-    return null;  // Vimeo needs an oEmbed lookup; resolved lazily by board.js
+  function fanName(u) {
+    if (!u) return 'anonymous';
+    if (u.is_anonymous) return 'anonymous';
+    var n = (u.display_name || '').trim();
+    if (!n) return 'anonymous';
+    return n.charAt(0) === '@' ? n : '@' + n;
   }
 
-  function videoEmbed(v) {
-    if (!v) return null;
-    if (v.platform === 'youtube') return 'https://www.youtube-nocookie.com/embed/' + v.id + '?autoplay=1&rel=0';
-    return 'https://player.vimeo.com/video/' + v.id + '?autoplay=1';
-  }
+  /* ------------------------------ queries -------------------------------- */
 
-  var vimeoCache = {};
-  async function vimeoThumb(id) {
-    if (vimeoCache[id] !== undefined) return vimeoCache[id];
-    try {
-      var r = await fetch('https://vimeo.com/api/oembed.json?url=' +
-        encodeURIComponent('https://vimeo.com/' + id) + '&width=640');
-      if (!r.ok) throw new Error('oembed');
-      var j = await r.json();
-      vimeoCache[id] = j.thumbnail_url || null;
-    } catch (e) { vimeoCache[id] = null; }
-    return vimeoCache[id];
-  }
+  var PCOLS = 'id,slug,category_id,name,blurb,wikipedia_url,photo_path,photo_credit,' +
+              'photo_license,total_cents,backer_count,first_backed_at,created_at';
 
-  /* --------------------------------------------------------------------
-     THE ONE SEED ENTRY — also the offline fallback, so the page renders
-     truthfully before Supabase is wired up. No invented candidates.
-     -------------------------------------------------------------------- */
-
-  var SEED = {
-    id: 'seed-lochan',
-    slug: 'lochan',
-    side: 'candidate',
-    board_id: null,
-    display_name: 'Lochan',
-    headline: 'REPLACE ME: one line on why you should be hired.',
-    url: 'https://lochan-maru.vercel.app',
-    photo_path: 'seed/lochan.jpg',
-    video_url: null,
-    video_platform: null,
-    category: 'Engineering',
-    current_bid_cents: 500,
-    click_count: 0,
-    status: 'live',
-    created_at: new Date().toISOString(),
-    last_bid_at: new Date().toISOString()
-  };
-
-  /* --------------------------------------------------------------------
-     QUERIES
-     -------------------------------------------------------------------- */
-
-  var COLS =
-    'id,slug,side,board_id,display_name,headline,url,photo_path,video_url,' +
-    'video_platform,category,current_bid_cents,click_count,status,created_at,last_bid_at';
-
-  function startOfToday() { var d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); }
-
-  /**
-   * listEntries — one query behind the homepage board, the role boards and
-   * the recruiter dashboard.
-   * @param {{side?:string, boardId?:string, homepageOnly?:boolean, category?:string,
-   *          scope?:'all'|'today', sort?:'bid'|'new', limit?:number, offset?:number}} o
-   */
-  async function listEntries(o) {
-    o = o || {};
-    var limit = o.limit || 50, offset = o.offset || 0;
-    var sort = o.sort === 'new' ? 'new' : 'bid';
-
-    if (OFFLINE) {
-      var rows = [SEED].filter(function (e) {
-        if (o.boardId) return false;                       // no offline boards
-        if (o.homepageOnly && e.board_id) return false;
-        if (o.side && e.side !== o.side) return false;
-        if (o.category && e.category !== o.category) return false;
-        if (o.scope === 'today' && (!e.last_bid_at || e.last_bid_at < startOfToday())) return false;
-        return true;
-      });
-      return { rows: rows.slice(offset, offset + limit), total: rows.length, offset: offset };
-    }
-
-    var q = sb.from('entries').select(COLS, { count: 'exact' }).eq('status', 'live');
-    if (o.boardId) q = q.eq('board_id', o.boardId);
-    else if (o.homepageOnly) q = q.is('board_id', null);
-    if (o.side) q = q.eq('side', o.side);
-    if (o.category) q = q.eq('category', o.category);
-    if (o.scope === 'today') q = q.gte('last_bid_at', startOfToday());
-
-    if (sort === 'new') {
-      q = q.order('created_at', { ascending: false });
-    } else {
-      q = q.order('current_bid_cents', { ascending: false })
-           .order('last_bid_at', { ascending: true, nullsFirst: false })
-           .order('created_at', { ascending: true });
-    }
-
-    var r = await q.range(offset, offset + limit - 1);
+  async function categories() {
+    if (OFFLINE) return [];
+    var r = await sb.from('categories').select('*').order('sort_order');
     if (r.error) throw r.error;
-    return { rows: r.data || [], total: r.count == null ? (r.data || []).length : r.count, offset: offset };
+    return r.data || [];
   }
 
-  async function getEntry(slug) {
-    if (OFFLINE) return slug === SEED.slug ? SEED : null;
-    var r = await sb.from('entries').select(COLS).eq('slug', slug).maybeSingle();
+  async function category(slug) {
+    if (OFFLINE) return null;
+    var r = await sb.from('categories').select('*').eq('slug', slug).maybeSingle();
     if (r.error) throw r.error;
     return r.data || null;
   }
 
-  async function getBoard(slug) {
-    if (OFFLINE || !slug) return null;
-    var r = await sb.from('boards').select('*').eq('slug', slug).maybeSingle();
+  /** Ranked people. Rank is the money: total_cents desc, first_backed_at asc. */
+  async function people(categoryId, limit, offset) {
+    if (OFFLINE) return { rows: [], total: 0 };
+    var r = await sb.from('people').select(PCOLS, { count: 'exact' })
+      .eq('category_id', categoryId)
+      .order('total_cents', { ascending: false })
+      .order('first_backed_at', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true })
+      .range(offset || 0, (offset || 0) + (limit || 100) - 1);
+    if (r.error) throw r.error;
+    return { rows: r.data || [], total: r.count || 0 };
+  }
+
+  async function person(slug) {
+    if (OFFLINE) return null;
+    var r = await sb.from('people').select(PCOLS + ',categories(slug,name,group_name)')
+      .eq('slug', slug).maybeSingle();
     if (r.error) throw r.error;
     return r.data || null;
+  }
+
+  /** Top backers of one person. */
+  async function fansOf(personId, limit) {
+    if (OFFLINE) return [];
+    var r = await sb.from('fan_totals')
+      .select('total_cents,users(id,display_name,is_anonymous)')
+      .eq('person_id', personId)
+      .order('total_cents', { ascending: false })
+      .limit(limit || 20);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
+  /** Top backers across the whole site. */
+  async function topFans(limit) {
+    if (OFFLINE) return [];
+    var r = await sb.from('users')
+      .select('id,display_name,is_anonymous,total_spent_cents')
+      .gt('total_spent_cents', 0)
+      .order('total_spent_cents', { ascending: false })
+      .limit(limit || 100);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
+  async function recentBids(limit) {
+    if (OFFLINE) return [];
+    var r = await sb.from('bids')
+      .select('id,amount_cents,created_at,users(display_name,is_anonymous),' +
+              'people(slug,name,categories(slug,name))')
+      .order('created_at', { ascending: false }).limit(limit || 12);
+    if (r.error) throw r.error;
+    return r.data || [];
+  }
+
+  async function backedToday() {
+    if (OFFLINE) return 0;
+    var d = new Date(); d.setHours(0, 0, 0, 0);
+    var r = await sb.from('bids').select('amount_cents').gte('created_at', d.toISOString());
+    if (r.error) return 0;
+    return (r.data || []).reduce(function (a, b) { return a + (b.amount_cents || 0); }, 0);
   }
 
   async function stats() {
-    if (OFFLINE) return { total_revenue_cents: 500, visitor_count: 0, launched_at: null };
-    var r = await sb.from('site_stats')
-      .select('total_revenue_cents,visitor_count,launched_at').eq('id', 1).maybeSingle();
-    return (r.data) || { total_revenue_cents: 0, visitor_count: 0, launched_at: null };
+    if (OFFLINE) return { visitor_count: 0, launched_at: null };
+    var r = await sb.from('site_stats').select('visitor_count,launched_at').eq('id', 1).maybeSingle();
+    return r.data || { visitor_count: 0, launched_at: null };
   }
 
-  async function recentBids(n) {
-    if (OFFLINE) return [];
-    var r = await sb.from('bids')
-      .select('id,amount_cents,created_at,entries(slug,display_name,category,status,current_bid_cents)')
-      .order('created_at', { ascending: false }).limit(n || 10);
-    if (r.error) throw r.error;
-    return (r.data || []).filter(function (b) { return b.entries && b.entries.status === 'live'; });
+  async function search(term) {
+    if (OFFLINE || !term || term.length < 2) return [];
+    var r = await sb.from('people').select('slug,name,photo_path,total_cents,categories(name)')
+      .ilike('name', '%' + term + '%')
+      .order('total_cents', { ascending: false }).limit(8);
+    return r.data || [];
   }
 
   function onBid(handler) {
     if (OFFLINE) return function () {};
-    var ch = sb.channel('bids-activity').on('postgres_changes',
+    var ch = sb.channel('bid-feed').on('postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'bids' },
       function (p) { handler(p.new); }).subscribe();
     return function () { sb.removeChannel(ch); };
   }
 
-  function logClick(entryId) {
-    if (OFFLINE || !entryId || String(entryId).indexOf('seed-') === 0) return Promise.resolve();
-    return sb.from('clicks').insert({ entry_id: entryId }).then(function () {}, function () {});
-  }
-
   async function recordVisit() {
     if (OFFLINE) return 0;
     try {
-      if (sessionStorage.getItem('ob_visit') === '1') return (await stats()).visitor_count || 0;
-      sessionStorage.setItem('ob_visit', '1');
-    } catch (e) { /* private mode */ }
+      if (sessionStorage.getItem('goat_visit') === '1') return (await stats()).visitor_count || 0;
+      sessionStorage.setItem('goat_visit', '1');
+    } catch (e) {}
     var r = await sb.rpc('record_visit');
-    if (r.error) return (await stats()).visitor_count || 0;
-    return r.data || 0;
+    return r.error ? 0 : (r.data || 0);
+  }
+
+  /* ------------------------------- auth ---------------------------------- */
+
+  var ME = null;
+  var meListeners = [];
+
+  function onMe(fn) { meListeners.push(fn); if (ME !== null) fn(ME); }
+  function emitMe() { meListeners.forEach(function (f) { try { f(ME); } catch (e) {} }); }
+
+  async function refreshMe() {
+    if (OFFLINE) { ME = null; emitMe(); return null; }
+    var s = await sb.auth.getSession();
+    if (!s.data.session) { ME = null; emitMe(); return null; }
+    var r = await sb.rpc('me');
+    ME = r.error ? null : r.data;
+    emitMe();
+    return ME;
+  }
+
+  async function signIn(email) {
+    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    var r = await sb.auth.signInWithOtp({
+      email: email,
+      options: { emailRedirectTo: window.location.origin + '/wallet.html' }
+    });
+    if (r.error) throw r.error;
+  }
+
+  async function signOut() { if (sb) await sb.auth.signOut(); ME = null; emitMe(); }
+
+  /* --------------------------- the four RPCs ------------------------------ */
+
+  async function placeBid(personId, cents) {
+    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    var r = await sb.rpc('place_bid', { p_person: personId, p_amount: cents });
+    if (r.error) throw new Error(cleanPgError(r.error.message));
+    if (ME) { ME.balance_cents = r.data.balance_cents; emitMe(); }
+    return r.data;
+  }
+
+  async function addPerson(categorySlug, name, wikipediaUrl, blurb) {
+    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    var r = await sb.rpc('add_person', {
+      p_category: categorySlug, p_name: name, p_wikipedia_url: wikipediaUrl, p_blurb: blurb || null
+    });
+    if (r.error) throw new Error(cleanPgError(r.error.message));
+    await refreshMe();
+    return r.data;
+  }
+
+  async function setProfile(name, anonymous) {
+    var r = await sb.rpc('set_profile', { p_name: name, p_anonymous: !!anonymous });
+    if (r.error) throw new Error(cleanPgError(r.error.message));
+    ME = r.data; emitMe();
+    return ME;
+  }
+
+  // Postgres prefixes raised messages; the message itself is already written
+  // for a person to read, so strip the wrapper rather than replacing it.
+  function cleanPgError(msg) {
+    return String(msg || 'That did not work.')
+      .replace(/^.*?(?:ERROR|error):\s*/, '')
+      .replace(/^P0001:\s*/, '').trim();
   }
 
   async function api(path, body) {
@@ -293,38 +271,104 @@
       body: JSON.stringify(body || {})
     });
     var data = null;
-    try { data = await res.json(); } catch (e) { data = null; }
+    try { data = await res.json(); } catch (e) {}
     if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ').'));
     return data;
   }
 
-  /* --------------------------------------------------------------------
-     THEME
-     -------------------------------------------------------------------- */
+  /* --------------------------- header shell ------------------------------- */
+  /* One definition, so the balance really is on every page. */
 
-  function initTheme() {
-    var saved = null;
-    try { saved = localStorage.getItem('ob_theme'); } catch (e) {}
-    if (saved) document.documentElement.setAttribute('data-theme', saved);
+  function mountHeader(current) {
+    var host = document.querySelector('[data-header]');
+    if (!host) return;
+    host.innerHTML =
+      '<div class="wrap"><div class="topbar">' +
+        '<a class="logo" href="/">GOAT<span>.lol</span></a>' +
+        '<div class="search">' +
+          '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+            '<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>' +
+            '<path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+          '<label class="sr-only" for="site-search">Search people</label>' +
+          '<input id="site-search" type="text" placeholder="Search anyone" autocomplete="off">' +
+          '<div class="results hide" id="search-results"></div>' +
+        '</div>' +
+        '<nav class="navlinks" aria-label="Primary">' +
+          '<a href="/#categories"' + (current === 'categories' ? ' aria-current="page"' : '') + '>Categories</a>' +
+          '<a href="/fans.html"' + (current === 'fans' ? ' aria-current="page"' : '') + '>Fans</a>' +
+          '<a href="/about.html"' + (current === 'about' ? ' aria-current="page"' : '') + '>About</a>' +
+        '</nav>' +
+        '<span class="balance" id="balance-pill">' +
+          '<b class="num" id="balance-amount">$0</b>' +
+          '<a class="btn btn-sm btn-gold" href="/wallet.html">Add</a>' +
+        '</span>' +
+      '</div></div>';
+
+    onMe(function (me) {
+      var amt = document.getElementById('balance-amount');
+      if (!amt) return;
+      amt.textContent = me ? money(me.balance_cents) : '$0';
+      var pill = document.getElementById('balance-pill');
+      var link = pill.querySelector('a');
+      link.textContent = me ? 'Add' : 'Sign in';
+    });
+
+    // search
+    var input = document.getElementById('site-search');
+    var box = document.getElementById('search-results');
+    var t = null;
+    input.addEventListener('input', function () {
+      clearTimeout(t);
+      t = setTimeout(async function () {
+        var rows = await search(input.value.trim());
+        if (!rows.length) { box.classList.add('hide'); box.innerHTML = ''; return; }
+        box.innerHTML = rows.map(function (p) {
+          return '<a href="/person.html?slug=' + esc(p.slug) + '">' +
+            photo(p, { plain: true }) +
+            '<span style="flex:1;min-width:0">' + esc(p.name) +
+              '<span class="muted" style="display:block;font-size:12px">' +
+                esc(p.categories ? p.categories.name : '') + '</span></span>' +
+            '<span class="num gold">' + money(p.total_cents) + '</span></a>';
+        }).join('');
+        box.classList.remove('hide');
+      }, 220);
+    });
     document.addEventListener('click', function (e) {
-      var b = e.target.closest ? e.target.closest('[data-theme-toggle]') : null;
-      if (!b) return;
-      var now = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', now);
-      try { localStorage.setItem('ob_theme', now); } catch (err) {}
+      if (!e.target.closest('.search')) { box.classList.add('hide'); }
     });
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initTheme);
-  else initTheme();
 
-  window.OB = {
-    sb: sb, OFFLINE: OFFLINE, CATEGORIES: CATEGORIES, JOB_HOSTS: JOB_HOSTS, SEED: SEED,
-    jobHostAllowed: jobHostAllowed,
-    money: money, int: int, claimCents: claimCents, timeAgo: timeAgo, longAgo: longAgo,
-    esc: esc, safeUrl: safeUrl, domainOf: domainOf, qs: qs, photoUrl: photoUrl,
-    parseVideo: parseVideo, videoThumb: videoThumb, videoEmbed: videoEmbed, vimeoThumb: vimeoThumb,
-    listEntries: listEntries, getEntry: getEntry, getBoard: getBoard,
-    stats: stats, recentBids: recentBids, onBid: onBid,
-    logClick: logClick, recordVisit: recordVisit, api: api
+  function mountFooter() {
+    var host = document.querySelector('[data-footer]');
+    if (!host) return;
+    host.innerHTML =
+      '<div class="wrap"><div class="foot">' +
+        '<span>GOAT.lol — the board is the money, nothing else.</span>' +
+        '<nav>' +
+          '<a href="/rules.html">Rules</a><a href="/about.html">About</a>' +
+          '<a href="/fans.html">Fans</a><a href="/wallet.html">Wallet</a>' +
+          '<a href="/terms.html">Terms</a><a href="/privacy.html">Privacy</a>' +
+        '</nav>' +
+      '</div></div>';
+  }
+
+  function boot() {
+    mountHeader(document.body.getAttribute('data-nav'));
+    mountFooter();
+    refreshMe();
+    if (sb) sb.auth.onAuthStateChange(function () { refreshMe(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+
+  window.G = {
+    sb: sb, OFFLINE: OFFLINE, TOPUPS: TOPUPS,
+    money: money, int: int, esc: esc, safeUrl: safeUrl, ago: ago, qs: qs,
+    initials: initials, photoUrl: photoUrl, photo: photo, fanName: fanName,
+    categories: categories, category: category, people: people, person: person,
+    fansOf: fansOf, topFans: topFans, recentBids: recentBids, backedToday: backedToday,
+    stats: stats, search: search, onBid: onBid, recordVisit: recordVisit,
+    onMe: onMe, refreshMe: refreshMe, signIn: signIn, signOut: signOut, get me() { return ME; },
+    placeBid: placeBid, addPerson: addPerson, setProfile: setProfile, api: api
   };
 })();

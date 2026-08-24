@@ -3,81 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Admin — outbid.lol</title>
-<meta name="theme-color" content="#FDFCFA">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/css/style.css">
+<title>Admin — GOAT.lol</title>
+<meta name="theme-color" content="#0F0E0C">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="/css/style.css">
 </head>
-<body data-page="admin">
-<div class="wrap">
-  <header class="topbar">
-    <div class="brand">
-      <a class="logo" href="/">
-        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-        </svg>
-        outbid.lol
-      </a>
-    </div>
-    <nav class="mainnav" aria-label="Primary">
-      <a href="/">Leaderboard</a>
-      <a href="/job.html">Job boards</a>
-      <a href="/recruiter.html">Recruiters</a>
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-        </svg>
-      </button>
-    </nav>
-  </header>
+<body data-nav="">
+<a class="skip" href="#main">Skip to content</a>
+<header data-header></header>
 
-  <main class="page">
-    <div id="login" class="wrap-narrow" style="padding:0">
-      <h1>Admin</h1>
-      <p class="lede">The password is checked on the server. It is never compared in the browser.</p>
-      <form class="card" style="margin-top:24px" id="login-form">
-        <div class="field" style="margin-top:0">
-          <label for="pw">Password</label>
-          <input id="pw" type="password" autocomplete="current-password" required>
-        </div>
-        <div id="login-error" class="notice notice-bad hide"></div>
-        <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Sign in</button></div>
-      </form>
-    </div>
-
-    <div id="panel" class="hide">
-      <div class="section-head">
-        <h1>Queue</h1>
-        <div class="pill-group" role="group" aria-label="Filter by status">
-          <button class="pill" type="button" data-status="pending" aria-pressed="true">Pending</button>
-          <button class="pill" type="button" data-status="live" aria-pressed="false">Live</button>
-          <button class="pill" type="button" data-status="rejected" aria-pressed="false">Rejected</button>
-        </div>
-      </div>
-      <div class="card" id="rows"><p class="muted">Loading.</p></div>
-
-      <div class="card" style="margin-top:22px">
-        <h2>Grant a free spot</h2>
-        <p class="hint" style="margin-top:6px">Creates a live entry with no payment and returns an upload link. For seeding only.</p>
-        <div class="grid2">
-          <div class="field"><label for="g_name">Name</label><input id="g_name" type="text"></div>
-          <div class="field"><label for="g_email">Email</label><input id="g_email" type="email"></div>
-        </div>
-        <div class="field"><label for="g_url">URL</label><input id="g_url" type="url" placeholder="https://"></div>
-        <div class="field"><label for="g_headline">One-liner</label><input id="g_headline" type="text" maxlength="120"></div>
-        <div class="grid2">
-          <div class="field"><label for="g_side">Side</label><span class="select-wrap"><select id="g_side"><option value="candidate">Looking for work</option><option value="recruiter">Hiring</option></select></span></div>
-          <div class="field"><label for="g_category">Category</label><span class="select-wrap"><select id="g_category"></select></span></div>
-        </div>
-        <div id="grant-result" class="notice hide"></div>
-        <div style="margin-top:18px"><button class="btn btn-primary" type="button" id="grant">Grant</button></div>
-      </div>
-    </div>
-  </main>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/js/config.js"></script>
-<script src="/js/supabase.js"></script>
+<main id="main"><div class="wrap page">
+  <div id="login">
+    <h1>Admin</h1>
+    <p class="lede">The password is checked on the server, never in the browser.</p>
+    <div class="panel" style="margin-top:22px"><form id="login-form">
+      <div class="field" style="margin-top:0"><label for="pw">Password</label><input id="pw" type="password" required></div>
+      <div id="login-error" class="notice notice-bad hide"></div>
+      <div style="margin-top:16px"><button class="btn btn-gold" type="submit">Sign in</button></div>
+    </form></div>
+  </div>
+  <div id="panel" class="hide">
+    <h1>Review</h1>
+    <p class="lede">Auto-fetch gives roughly 60% usable photos and some odd name choices. Three minutes a board is the difference between a site that looks made and one that looks scraped.</p>
+    <div class="field" style="max-width:340px"><label for="cat">Board</label><select id="cat"></select></div>
+    <div id="rows" class="panel" style="margin-top:18px"><p class="muted">Pick a board.</p></div>
+  </div>
+</div></main>
+<footer data-footer></footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="/js/config.js"></script><script src="/js/supabase.js"></script>
 <script src="/js/admin.js"></script>
+</body>
+</html>

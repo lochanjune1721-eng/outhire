@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board — GOAT.lol</title>
+<meta name="theme-color" content="#0F0E0C">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-nav="categories">
+<a class="skip" href="#main">Skip to content</a>
+<header data-header></header>
+
+<main id="main"><div class="wrap">
+  <div id="cat-head" class="page" style="padding-bottom:14px"><p class="empty">Loading.</p></div>
+  <div class="board" id="board" data-start="1"></div>
+  <div id="pager" style="display:flex;justify-content:center;gap:8px;padding:26px 0"></div>
+  <section class="panel" style="margin-top:20px" id="add-panel" hidden>
+    <h2>Missing someone?</h2>
+    <p class="muted" style="font-size:14px">Adding a name costs <b class="gold">$1</b> from your balance, and that dollar is their first backing. Real public figures only — a Wikipedia link is required.</p>
+    <div class="field"><label for="add-name">Name</label><input id="add-name" type="text" maxlength="80"></div>
+    <div class="field"><label for="add-wiki">Wikipedia URL</label><input id="add-wiki" type="url" placeholder="https://en.wikipedia.org/wiki/..."></div>
+    <div class="field"><label for="add-blurb">One line <span class="muted">— optional</span></label><input id="add-blurb" type="text" maxlength="120"></div>
+    <div id="add-error" class="notice notice-bad hide"></div>
+    <div style="margin-top:16px"><button class="btn btn-gold" type="button" id="add-go">Add for $1</button></div>
+  </section>
+</div></main>
+<footer data-footer></footer>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="/js/config.js"></script><script src="/js/supabase.js"></script>
+<script src="/js/board.js"></script><script src="/js/category.js"></script>
+</body>
+</html>

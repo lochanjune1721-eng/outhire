@@ -1,100 +1,110 @@
-/* outbid.lol — admin. The password is verified by /api/admin and never
- * compared in the browser; the server returns a short-lived signed token. */
+/* GOAT.lol — the manual review pass. Auto-fetch gives roughly 60% usable
+ * photos and some odd name choices, so this is where a board stops looking
+ * scraped: swap bad photos, delete wrong entries, add obvious missing names. */
 (function () {
   'use strict';
-  var OB = window.OB;
+  var G = window.G;
   var $ = function (s) { return document.querySelector(s); };
-  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
-
-  var token = null, status = 'pending';
-  try { token = sessionStorage.getItem('ob_admin') || null; } catch (e) {}
-
-  function fail(msg) { $('#login-error').textContent = msg; $('#login-error').classList.remove('hide'); }
-
-  $('#g_category').innerHTML = OB.CATEGORIES.map(function (c) { return '<option>' + OB.esc(c) + '</option>'; }).join('');
+  var token = null, slug = null;
+  try { token = sessionStorage.getItem('goat_admin'); } catch (e) {}
 
   $('#login-form').addEventListener('submit', async function (e) {
     e.preventDefault();
     $('#login-error').classList.add('hide');
     try {
-      var r = await OB.api('/api/admin', { action: 'login', password: $('#pw').value });
+      var r = await G.api('/api/admin', { action: 'login', password: $('#pw').value });
       token = r.token;
-      try { sessionStorage.setItem('ob_admin', token); } catch (e2) {}
+      try { sessionStorage.setItem('goat_admin', token); } catch (e2) {}
       open();
-    } catch (e3) { fail(e3.message || 'That password was not accepted.'); }
+    } catch (e3) {
+      $('#login-error').textContent = e3.message;
+      $('#login-error').classList.remove('hide');
+    }
   });
 
-  function open() {
+  async function open() {
     $('#login').classList.add('hide');
     $('#panel').classList.remove('hide');
-    load();
+    var cats = await G.categories();
+    $('#cat').innerHTML = '<option value="">Pick a board</option>' + cats.map(function (c) {
+      return '<option value="' + G.esc(c.slug) + '">' + G.esc(c.group_name || '') + ' — ' + G.esc(c.name) + '</option>';
+    }).join('');
   }
+
+  $('#cat').addEventListener('change', function () { slug = this.value; load(); });
 
   async function load() {
     var host = $('#rows');
+    if (!slug) { host.innerHTML = '<p class="muted">Pick a board.</p>'; return; }
     host.innerHTML = '<p class="muted">Loading.</p>';
     try {
-      var r = await OB.api('/api/admin', { action: 'list', token: token, status: status });
-      if (!r.entries.length) { host.innerHTML = '<p class="muted">Nothing ' + status + '.</p>'; return; }
-      host.innerHTML = '<div class="tablewrap"><table class="list"><thead><tr>' +
-        '<th>Name</th><th>One-liner</th><th>Side</th><th>Bid</th><th>Media</th><th>Actions</th>' +
-        '</tr></thead><tbody>' + r.entries.map(function (e) {
-          return '<tr data-id="' + OB.esc(e.id) + '">' +
-            '<td><b>' + OB.esc(e.display_name) + '</b><div class="muted" style="font-size:13px">' + OB.esc(OB.domainOf(e.url)) + '</div></td>' +
-            '<td>' + OB.esc(e.headline) + '</td>' +
-            '<td>' + OB.esc(e.side) + '</td>' +
-            '<td class="num">' + OB.money(e.current_bid_cents) + '</td>' +
-            '<td>' + (e.photo_path ? 'photo ' : '') + (e.video_url ? 'video' : '') + (!e.photo_path && !e.video_url ? '<span class="coral">none</span>' : '') + '</td>' +
-            '<td><div style="display:flex;gap:6px;flex-wrap:wrap">' +
-              (status !== 'live' ? '<button class="btn btn-sm" type="button" data-act="approve">Approve</button>' : '') +
-              (status !== 'rejected' ? '<button class="btn btn-sm" type="button" data-act="reject">Reject</button>' : '') +
-            '</div></td>' +
-          '</tr>';
-        }).join('') + '</tbody></table></div>';
+      var r = await G.api('/api/admin', { action: 'list', token: token, slug: slug });
+      host.innerHTML =
+        r.people.map(function (p) {
+          return '<div class="row" data-id="' + G.esc(p.id) + '" style="align-items:flex-start">' +
+            G.photo(p, { plain: true, style: 'width:72px' }) +
+            '<div class="row-body">' +
+              '<div class="field" style="margin-top:0"><label>Name</label><input data-f="name" value="' + G.esc(p.name || '') + '"></div>' +
+              '<div class="field"><label>One line</label><input data-f="blurb" value="' + G.esc(p.blurb || '') + '"></div>' +
+              '<div class="field"><label>Photo path <span class="muted">— in the photos bucket, or a full URL</span></label>' +
+                '<input data-f="photo_path" value="' + G.esc(p.photo_path || '') + '"></div>' +
+              '<div class="field"><label>Photo credit</label><input data-f="photo_credit" value="' + G.esc(p.photo_credit || '') + '"></div>' +
+              '<div class="field"><label>Licence</label><input data-f="photo_license" value="' + G.esc(p.photo_license || '') + '"></div>' +
+              '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                '<button class="btn btn-sm btn-gold" type="button" data-save>Save</button>' +
+                (p.total_cents > 0
+                  ? '<span class="muted" style="font-size:12px">' + G.money(p.total_cents) + ' backed — permanent, cannot be deleted</span>'
+                  : '<button class="btn btn-sm" type="button" data-del>Delete</button>') +
+                '<span class="muted" data-note style="font-size:12px"></span>' +
+              '</div>' +
+            '</div></div>';
+        }).join('') +
+        '<div class="panel" style="margin-top:16px"><h2>Add a missing name</h2>' +
+          '<div class="field"><label>Name</label><input id="new-name"></div>' +
+          '<div class="field"><label>Wikipedia URL</label><input id="new-wiki" type="url"></div>' +
+          '<div class="field"><label>One line</label><input id="new-blurb"></div>' +
+          '<div style="margin-top:12px"><button class="btn btn-gold" type="button" id="new-go">Add at $0</button></div>' +
+        '</div>';
     } catch (e) {
-      host.innerHTML = '<p class="muted">' + OB.esc(e.message) + '</p>';
-      if (/token/i.test(e.message)) { token = null; try { sessionStorage.removeItem('ob_admin'); } catch (x) {} }
+      host.innerHTML = '<p class="muted">' + G.esc(e.message) + '</p>';
+      if (/token/i.test(e.message)) { try { sessionStorage.removeItem('goat_admin'); } catch (x) {} }
     }
   }
 
   $('#rows').addEventListener('click', async function (e) {
-    var b = e.target.closest ? e.target.closest('[data-act]') : null;
-    if (!b) return;
-    var tr = b.closest('[data-id]');
-    b.disabled = true;
-    try {
-      await OB.api('/api/admin', { action: b.getAttribute('data-act'), token: token, id: tr.getAttribute('data-id') });
-      tr.remove();
-    } catch (err) { b.disabled = false; }
-  });
+    var save = e.target.closest('[data-save]');
+    var del = e.target.closest('[data-del]');
+    var add = e.target.closest('#new-go');
 
-  $$('[data-status]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      status = b.getAttribute('data-status');
-      $$('[data-status]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
-      load();
-    });
-  });
+    if (add) {
+      add.disabled = true;
+      try {
+        await G.api('/api/admin', {
+          action: 'add', token: token, slug: slug,
+          name: $('#new-name').value, wikipedia_url: $('#new-wiki').value, blurb: $('#new-blurb').value
+        });
+        load();
+      } catch (err) { add.disabled = false; alert(err.message); }
+      return;
+    }
 
-  $('#grant').addEventListener('click', async function () {
-    var box = $('#grant-result');
-    box.classList.add('hide');
-    try {
-      var r = await OB.api('/api/admin', {
-        action: 'grant', token: token,
-        display_name: $('#g_name').value.trim(),
-        email: $('#g_email').value.trim(),
-        url: $('#g_url').value.trim(),
-        headline: $('#g_headline').value.trim(),
-        side: $('#g_side').value,
-        category: $('#g_category').value
+    var row = e.target.closest('[data-id]');
+    if (!row) return;
+    var note = row.querySelector('[data-note]');
+
+    if (save) {
+      var patch = { action: 'update', token: token, id: row.getAttribute('data-id') };
+      Array.prototype.forEach.call(row.querySelectorAll('[data-f]'), function (i) {
+        patch[i.getAttribute('data-f')] = i.value;
       });
-      box.className = 'notice notice-good';
-      box.innerHTML = 'Granted. Upload link: <a href="' + OB.esc(r.upload_url) + '">' + OB.esc(r.upload_url) + '</a>';
-      box.classList.remove('hide');
-    } catch (e) {
-      box.className = 'notice notice-bad';
-      box.textContent = e.message; box.classList.remove('hide');
+      try { await G.api('/api/admin', patch); note.textContent = 'Saved.'; }
+      catch (err) { note.textContent = err.message; }
+      setTimeout(function () { note.textContent = ''; }, 3000);
+    }
+
+    if (del) {
+      try { await G.api('/api/admin', { action: 'delete', token: token, id: row.getAttribute('data-id') }); row.remove(); }
+      catch (err) { note.textContent = err.message; }
     }
   });
 

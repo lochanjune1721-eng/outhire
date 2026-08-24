@@ -1,367 +1,205 @@
-/* outbid.lol — the tapering leaderboard.
- * Card size scales down with rank, so #1 physically dominates the page.
- * Shared by the homepage and the role boards; exported on window.OBBoard. */
+/* GOAT.lol — the tapering leaderboard and the back control.
+ *
+ * The moment this file exists for: someone taps $1, the number moves, the
+ * board reorders, and their handle appears on the fan list. No modal, no
+ * confirmation, no redirect, no reload.
+ */
 (function () {
   'use strict';
+  var G = window.G;
 
-  var OB = window.OB;
-  var $ = function (s, r) { return (r || document).querySelector(s); };
-  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
-  var PAGE_SIZE = 50;
-
-  /* Rank -> tier. The tier drives every size in the card via CSS custom
-     properties, so the taper is one lookup rather than six templates. */
   function tierOf(rank) {
     if (rank === 1) return 1;
     if (rank === 2) return 2;
     if (rank === 3) return 3;
     if (rank <= 10) return 4;
-    if (rank <= 25) return 11;
-    return 26;
+    return 11;
   }
 
-  function initials(name) {
-    return String(name || '?').trim().split(/\s+/).slice(0, 2)
-      .map(function (w) { return w[0]; }).join('').toUpperCase() || '?';
+  /* What this person needs to move up one place — the line that makes someone
+     reach for their balance. */
+  function stakes(rows, index) {
+    var me = rows[index];
+    if (index === 0) return 'holding #1';
+    var above = rows[index - 1];
+    // Taking #1 costs at least $5 more than the leader; every other place
+    // needs only a dollar more than the person directly above.
+    var target = index === 1
+      ? above.total_cents + 500
+      : above.total_cents + 100;
+    var need = Math.max(100, target - me.total_cents);
+    return G.money(need) + ' puts them at #' + index;
   }
 
-  /* ------------------------------------------------------------------
-     MEDIA — thumbnail first. An iframe is only ever created on click, so
-     a fifty-row page never mounts fifty players.
-     ------------------------------------------------------------------ */
-
-  function mediaMarkup(entry) {
-    var photo = OB.photoUrl(entry.photo_path);
-    var vid = OB.parseVideo(entry.video_url);
-    var still = photo || (vid ? OB.videoThumb(vid) : null);
-
-    var inner;
-    if (still) {
-      inner = '<img src="' + OB.esc(still) + '" alt="" loading="lazy" decoding="async" ' +
-              'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),' +
-              '{className:\'monogram\',textContent:this.dataset.ini}))" ' +
-              'data-ini="' + OB.esc(initials(entry.display_name)) + '">';
-    } else {
-      inner = '<div class="monogram">' + OB.esc(initials(entry.display_name)) + '</div>';
-    }
-
-    var play = vid
-      ? '<button class="play" type="button" data-play="' + OB.esc(entry.video_url) + '" ' +
-        'aria-label="Play video from ' + OB.esc(entry.display_name) + '">' +
-        '<span><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-        '<path d="M8 5v14l11-7z"/></svg></span></button>'
-      : '';
-
-    return '<div class="media" data-media' +
-           (still ? ' data-photo' : '') +
-           (vid && vid.platform === 'vimeo' && !photo ? ' data-vimeo="' + OB.esc(vid.id) + '"' : '') +
-           '>' + inner + play + '</div>';
+  function fanStrip(fans) {
+    if (!fans || !fans.length) return '<span>no backers yet</span>';
+    return fans.slice(0, 3).map(function (f, i) {
+      return '<span class="fan">' + G.esc(G.fanName(f.users)) + '</span>' +
+             (i < Math.min(3, fans.length) - 1 ? '<span aria-hidden="true">·</span>' : '');
+    }).join('');
   }
 
-  /* ------------------------------------------------------------------
-     ROW
-     ------------------------------------------------------------------ */
-
-  function rowMarkup(entry, rank, opts) {
+  function rowMarkup(p, rank, opts) {
     opts = opts || {};
-    var url = OB.safeUrl(entry.url);
-    var domain = OB.domainOf(entry.url);
-    var claim = OB.claimCents(entry);
-    var linkLabel = entry.side === 'recruiter' ? 'see role' : 'see details';
-
-    var claimBlock = opts.noBidding ? '' :
-      '<div class="row-claim">' +
-        '<a class="btn btn-primary btn-block btn-sm" href="' + OB.esc(claimHref(entry, rank, opts)) + '">' +
-          'Claim this rank for <span class="num">' + OB.money(claim) + '</span>' +
-        '</a>' +
-      '</div>';
-
+    var tier = tierOf(rank);
     return '' +
-      '<article class="row" data-tier="' + tierOf(rank) + '" data-rank="' + rank + '" data-id="' + OB.esc(entry.id) + '">' +
-        '<span class="rank-badge num">#' + rank + '</span>' +
-        mediaMarkup(entry) +
+      '<article class="row" data-tier="' + tier + '" data-person="' + G.esc(p.id) + '" data-rank="' + rank + '">' +
+        '<span class="row-rank num">#' + rank + '</span>' +
+        G.photo(p, { plain: true }) +
         '<div class="row-body">' +
-          '<h3 class="row-title">' +
-            (url
-              ? '<a href="' + OB.esc(url) + '" target="_blank" rel="noopener noreferrer nofollow" data-click="' + OB.esc(entry.id) + '">' + OB.esc(entry.display_name) + '</a>'
-              : OB.esc(entry.display_name)) +
-          '</h3>' +
-          '<p class="row-line">' + OB.esc(entry.headline) + '</p>' +
-          '<div class="row-meta">' +
-            '<span>' + OB.esc(OB.timeAgo(entry.last_bid_at || entry.created_at)) + '</span>' +
-            (domain ? '<span>' + OB.esc(domain) + '</span>' : '') +
-            (entry.category ? '<span class="metachip">' + OB.esc(entry.category) + '</span>' : '') +
-            '<span class="clickcount"><span class="dot dot-coral" aria-hidden="true"></span>' +
-              '<span class="num">' + OB.int(entry.click_count) + '</span> clicks</span>' +
-            '<a href="/entry.html?slug=' + OB.esc(entry.slug) + '">' + linkLabel + '</a>' +
-          '</div>' +
-          claimBlock +
+          '<h3 class="row-name"><a href="/person.html?slug=' + G.esc(p.slug) + '">' + G.esc(p.name) + '</a></h3>' +
+          (p.blurb ? '<p class="row-blurb">' + G.esc(p.blurb) + '</p>' : '') +
+          '<div class="row-fans" data-fans>' + fanStrip(opts.fans) + '</div>' +
         '</div>' +
         '<div class="row-right">' +
-          (opts.noBidding
-            ? '<span class="tag tag-quiet">' + OB.esc(OB.timeAgo(entry.created_at)) + '</span>'
-            : '<span class="row-bid num">' + OB.money(entry.current_bid_cents) + '</span>') +
+          '<span class="row-total num" data-total>' + G.money(p.total_cents) + '</span>' +
+          '<span class="row-stakes" data-stakes>' + G.esc(opts.stakes || '') + '</span>' +
+          '<span class="back">' +
+            '<span class="stepbox">' +
+              '<button type="button" data-step="-1" aria-label="Less">−</button>' +
+              '<span class="amt num" data-amt>$1</span>' +
+              '<button type="button" data-step="1" aria-label="More">+</button>' +
+            '</span>' +
+            '<button class="btn btn-gold btn-sm" type="button" data-back>Back</button>' +
+          '</span>' +
         '</div>' +
       '</article>';
   }
 
-  function claimHref(entry, rank, opts) {
-    var p = new URLSearchParams();
-    p.set('bid', String(Math.round(OB.claimCents(entry) / 100)));
-    p.set('side', entry.side || 'candidate');
-    if (entry.category) p.set('category', entry.category);
-    if (entry.slug) p.set('claim', entry.slug);
-    if (opts && opts.boardSlug) p.set('board', opts.boardSlug);
-    return '/submit.html?' + p.toString();
-  }
-
   /* ------------------------------------------------------------------
-     RENDER — with the Top 10 / Top 20 divider labels inline.
+     RENDER — fan strips are fetched in one query for the whole page
+     rather than one per row.
      ------------------------------------------------------------------ */
 
-  function render(container, rows, startRank, opts) {
-    opts = opts || {};
+  async function render(host, rows, startRank) {
     if (!rows.length) {
-      container.innerHTML = opts.emptyHtml ||
-        '<p class="empty"><b>Nobody has outbid #1 yet.</b> New spots start at $5.</p>';
+      host.innerHTML = '<p class="empty">Nobody is on this board yet. ' +
+        '<b>$1 takes #1.</b></p>';
       return;
     }
-    var out = [];
-    rows.forEach(function (e, i) {
-      var rank = startRank + i;
-      if (rank === 4) out.push('<div class="divider">Top 10</div>');
-      if (rank === 11) out.push('<div class="divider">Top 20</div>');
-      if (rank === 26) out.push('<div class="divider">Everyone else</div>');
-      out.push(rowMarkup(e, rank, opts));
-    });
-    container.innerHTML = out.join('');
-    hydrate(container);
-  }
+    var fansByPerson = {};
+    try {
+      var ids = rows.map(function (r) { return r.id; });
+      var res = await G.sb.from('fan_totals')
+        .select('person_id,total_cents,users(display_name,is_anonymous)')
+        .in('person_id', ids)
+        .order('total_cents', { ascending: false });
+      (res.data || []).forEach(function (f) {
+        (fansByPerson[f.person_id] = fansByPerson[f.person_id] || []).push(f);
+      });
+    } catch (e) { /* strips fall back to "no backers yet" */ }
 
-  /* Click-to-play, click logging, and lazy Vimeo stills. */
-  function hydrate(root) {
-    $$('[data-vimeo]', root).forEach(async function (box) {
-      var url = await OB.vimeoThumb(box.getAttribute('data-vimeo'));
-      if (!url) return;
-      var img = document.createElement('img');
-      img.src = url; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async';
-      var old = $('img, .monogram', box);
-      if (old) old.replaceWith(img);
-    });
-
-    if (root.dataset.obBound) return;
-    root.dataset.obBound = '1';
-
-    root.addEventListener('click', function (e) {
-      var play = e.target.closest ? e.target.closest('[data-play]') : null;
-      if (play) {
-        e.preventDefault();
-        var v = OB.parseVideo(play.getAttribute('data-play'));
-        if (!v) return;
-        var box = play.closest('.media');
-        var frame = document.createElement('iframe');
-        frame.src = OB.videoEmbed(v);
-        frame.title = 'Video';
-        frame.allow = 'autoplay; fullscreen; picture-in-picture';
-        frame.setAttribute('allowfullscreen', '');
-        box.innerHTML = '';
-        box.appendChild(frame);
-        return;
-      }
-      var link = e.target.closest ? e.target.closest('[data-click]') : null;
-      if (link) OB.logClick(link.getAttribute('data-click'));
-    });
+    host.innerHTML = rows.map(function (p, i) {
+      return rowMarkup(p, startRank + i, {
+        fans: fansByPerson[p.id],
+        stakes: stakes(rows, i)
+      });
+    }).join('');
+    bind(host, rows);
   }
 
   /* ------------------------------------------------------------------
-     PAGINATION — numbered, 50 rows a page.
+     BACKING — optimistic reorder in place, no reload.
      ------------------------------------------------------------------ */
 
-  function renderPager(el, total, offset, onGo) {
-    if (!el) return;
-    var pages = Math.ceil(total / PAGE_SIZE);
-    if (pages <= 1) { el.innerHTML = ''; return; }
-    var cur = Math.floor(offset / PAGE_SIZE) + 1;
-    var nums = [];
-    for (var i = 1; i <= pages; i++) {
-      if (i === 1 || i === pages || Math.abs(i - cur) <= 2) nums.push(i);
-      else if (nums[nums.length - 1] !== '…') nums.push('…');
-    }
-    el.innerHTML =
-      '<button class="pagebtn" type="button" data-go="' + (cur - 1) + '"' + (cur === 1 ? ' disabled' : '') + '>Prev</button>' +
-      nums.map(function (n) {
-        return n === '…'
-          ? '<span class="pagebtn" style="border:0;background:none">…</span>'
-          : '<button class="pagebtn" type="button" data-go="' + n + '" aria-current="' + (n === cur) + '">' + n + '</button>';
-      }).join('') +
-      '<button class="pagebtn" type="button" data-go="' + (cur + 1) + '"' + (cur === pages ? ' disabled' : '') + '>Next</button>';
+  function bind(host, rows) {
+    if (host.dataset.bound) { host.dataset.rows = ''; }
+    host.dataset.bound = '1';
 
-    if (!el.dataset.bound) {
-      el.dataset.bound = '1';
-      el.addEventListener('click', function (e) {
-        var b = e.target.closest ? e.target.closest('[data-go]') : null;
-        if (!b || b.disabled) return;
-        onGo((parseInt(b.getAttribute('data-go'), 10) - 1) * PAGE_SIZE);
-      });
-    }
-  }
+    if (host._goatHandler) host.removeEventListener('click', host._goatHandler);
 
-  window.OBBoard = {
-    tierOf: tierOf, rowMarkup: rowMarkup, mediaMarkup: mediaMarkup,
-    render: render, hydrate: hydrate, renderPager: renderPager, PAGE_SIZE: PAGE_SIZE
-  };
-
-  /* ==================================================================
-     HOMEPAGE
-     ================================================================== */
-
-  if (document.body.getAttribute('data-page') !== 'home') return;
-
-  var state = { side: 'candidate', category: '', scope: 'all', offset: 0, bid: 5 };
-
-  function syncBid() {
-    $('#bid-amount').textContent = '$' + state.bid.toLocaleString('en-US');
-  }
-
-  function setSide(side) {
-    state.side = side; state.offset = 0;
-    $$('[data-side]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-side') === side)); });
-    $('#entry-url').placeholder = side === 'recruiter' ? 'Your job listing URL' : 'Your portfolio URL';
-    draw();
-  }
-
-  async function draw() {
-    var host = $('#board-rows');
-    var res = await OB.listEntries({
-      side: state.side, homepageOnly: true,
-      category: state.category || null, scope: state.scope,
-      limit: PAGE_SIZE, offset: state.offset
-    });
-
-    var empty = state.side === 'recruiter'
-      ? '<p class="empty"><b>No open roles on the board yet.</b> New spots start at $5.</p>'
-      : (state.category || state.scope === 'today'
-          ? '<p class="empty">Nothing here yet. New spots start at <b>$5</b>.</p>'
-          : '<p class="empty"><b>Nobody has outbid #1 yet.</b> New spots start at $5.</p>');
-
-    render(host, res.rows, state.offset + 1, { emptyHtml: empty });
-    renderPager($('#pager'), res.total, state.offset, function (off) {
-      state.offset = off; draw();
-      $('#board').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-
-    // The steppers open at one dollar above whatever holds #1 right now.
-    if (state.offset === 0 && res.rows.length) {
-      state.bid = Math.round(OB.claimCents(res.rows[0]) / 100);
-      syncBid();
-    }
-  }
-
-  async function initHeader() {
-    var sel = $('#entry-category');
-    sel.innerHTML = '<option value="">Choose a category</option>' +
-      OB.CATEGORIES.map(function (c) { return '<option>' + OB.esc(c) + '</option>'; }).join('');
-
-    var chips = $('#categories');
-    chips.innerHTML = '<button class="chip" type="button" data-cat="" aria-pressed="true">' +
-        '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="2" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="2" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="2" stroke="currentColor" stroke-width="2"/></svg>All</button>' +
-      OB.CATEGORIES.map(function (c) {
-        return '<button class="chip" type="button" data-cat="' + OB.esc(c) + '" aria-pressed="false">' + OB.esc(c) + '</button>';
-      }).join('') +
-      '<button class="chip" type="button" data-more aria-expanded="false">More ' +
-        '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-      '</button>';
-
-    chips.addEventListener('click', function (e) {
-      var more = e.target.closest ? e.target.closest('[data-more]') : null;
-      if (more) {
-        var open = chips.getAttribute('data-expanded') !== 'true';
-        chips.setAttribute('data-expanded', String(open));
-        more.setAttribute('aria-expanded', String(open));
-        more.firstChild.nodeValue = open ? 'Less ' : 'More ';
+    host._goatHandler = async function (e) {
+      var step = e.target.closest ? e.target.closest('[data-step]') : null;
+      if (step) {
+        var box = step.closest('.stepbox');
+        var el = box.querySelector('[data-amt]');
+        var v = parseInt(el.textContent.replace(/\D/g, ''), 10) || 1;
+        v = Math.max(1, v + parseInt(step.getAttribute('data-step'), 10));
+        el.textContent = '$' + v;
         return;
       }
-      var b = e.target.closest ? e.target.closest('.chip') : null;
-      if (!b) return;
-      state.category = b.getAttribute('data-cat'); state.offset = 0;
-      $$('.chip[data-cat]', chips).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
-      draw();
-    });
 
-    $$('[data-side]').forEach(function (b) {
-      b.addEventListener('click', function () { setSide(b.getAttribute('data-side')); });
-    });
-    $$('[data-scope]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        state.scope = b.getAttribute('data-scope'); state.offset = 0;
-        $$('[data-scope]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
-        draw();
-      });
-    });
+      var back = e.target.closest ? e.target.closest('[data-back]') : null;
+      if (!back) return;
 
-    $('#bid-down').addEventListener('click', function () { state.bid = Math.max(5, state.bid - 1); syncBid(); });
-    $('#bid-up').addEventListener('click', function () { state.bid = state.bid + 1; syncBid(); });
+      var row = back.closest('.row');
+      var personId = row.getAttribute('data-person');
+      var amtEl = row.querySelector('[data-amt]');
+      var dollars = parseInt(amtEl.textContent.replace(/\D/g, ''), 10) || 1;
 
-    $('#entry-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var url = OB.safeUrl($('#entry-url').value);
-      if (!url) { $('#entry-url').focus(); return; }
-      var p = new URLSearchParams();
-      p.set('url', url);
-      p.set('side', state.side);
-      p.set('bid', String(state.bid));
-      var cat = $('#entry-category').value;
-      if (cat) p.set('category', cat);
-      window.location.href = '/submit.html?' + p.toString();
-    });
+      if (!G.me) { toast('Sign in to back someone.', '/wallet.html', 'Sign in'); return; }
+      if (G.me.balance_cents < dollars * 100) {
+        toast('Not enough credit. You have ' + G.money(G.me.balance_cents) + '.', '/wallet.html', 'Add credit');
+        return;
+      }
 
-    syncBid();
-  }
-
-  async function initStats() {
-    var s = await OB.stats();
-    $('#stat-visitors').textContent = OB.int(s.visitor_count);
-    OB.recordVisit().then(function (n) { if (n) $('#stat-visitors').textContent = OB.int(n); });
-    // "Online" has no server-side presence source; derive a steady, honest
-    // stand-in from the visitor count rather than inventing a number.
-    $('#stat-online').textContent = OB.int(Math.max(1, Math.round((s.visitor_count || 0) * 0.0005) + 1));
-    if (s.total_revenue_cents) {
-      $('#revenue-line').textContent = OB.money(s.total_revenue_cents) + ' bid so far';
-    }
-  }
-
-  function activityLine(bid, isNew) {
-    var e = bid.entries || {};
-    return '<li' + (isNew ? ' class="is-new"' : '') + '>' +
-      '<b>' + OB.esc(e.display_name || 'Someone') + '</b> took ' +
-      '<span class="num">#' + (bid.rank || '—') + '</span>' +
-      '<span aria-hidden="true">·</span>' +
-      '<span class="amt">' + OB.money(bid.amount_cents) + '</span>' +
-      '<span aria-hidden="true">·</span>' +
-      '<span>' + OB.esc(OB.longAgo(bid.created_at)) + '</span>' +
-    '</li>';
-  }
-
-  async function initActivity() {
-    var list = $('#activity-list');
-    var bids = await OB.recentBids(10);
-    list.innerHTML = bids.length
-      ? bids.map(function (b) { return activityLine(b, false); }).join('')
-      : '<li>No bids yet. The first one starts at <b>$5</b>.</li>';
-
-    OB.onBid(async function (row) {
+      back.disabled = true;
       try {
-        var r = await OB.sb.from('entries')
-          .select('slug,display_name,category,status').eq('id', row.entry_id).maybeSingle();
-        if (!r.data || r.data.status !== 'live') return;
-        list.insertAdjacentHTML('afterbegin',
-          activityLine({ amount_cents: row.amount_cents, created_at: row.created_at, entries: r.data }, true));
-        while (list.children.length > 10) list.removeChild(list.lastElementChild);
-      } catch (e) { /* the bid still landed */ }
-    });
+        var res = await G.placeBid(personId, dollars * 100);
+        var totalEl = row.querySelector('[data-total]');
+        totalEl.textContent = G.money(res.total_cents);
+        var r = rows.filter(function (x) { return x.id === personId; })[0];
+        if (r) r.total_cents = res.total_cents;
+        row.classList.add('is-bumped');
+        setTimeout(function () { row.classList.remove('is-bumped'); }, 520);
+        reorder(host, rows);
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        back.disabled = false;
+      }
+    };
+    host.addEventListener('click', host._goatHandler);
   }
 
-  function boot() { initHeader(); draw(); initStats(); initActivity(); }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  /* Re-sort in place and repaint rank, tier and stakes, so the board moves
+     under the person's finger without a round trip. */
+  function reorder(host, rows) {
+    rows.sort(function (a, b) {
+      if (b.total_cents !== a.total_cents) return b.total_cents - a.total_cents;
+      var af = a.first_backed_at ? Date.parse(a.first_backed_at) : Infinity;
+      var bf = b.first_backed_at ? Date.parse(b.first_backed_at) : Infinity;
+      if (af !== bf) return af - bf;
+      return Date.parse(a.created_at) - Date.parse(b.created_at);
+    });
+
+    var start = parseInt(host.getAttribute('data-start') || '1', 10);
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (p, i) {
+      var el = host.querySelector('[data-person="' + CSS.escape(p.id) + '"]');
+      if (!el) return;
+      var rank = start + i;
+      el.setAttribute('data-rank', rank);
+      el.setAttribute('data-tier', tierOf(rank));
+      el.querySelector('.row-rank').textContent = '#' + rank;
+      el.querySelector('[data-stakes]').textContent = stakes(rows, i);
+      frag.appendChild(el);
+    });
+    host.appendChild(frag);
+  }
+
+  /* ------------------------------------------------------------------ */
+
+  var toastEl = null;
+  function toast(msg, href, label) {
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'notice notice-gold';
+      toastEl.setAttribute('role', 'status');
+      toastEl.style.cssText =
+        'position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:80;' +
+        'max-width:min(440px,calc(100vw - 32px));margin:0;display:flex;gap:12px;align-items:center';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.innerHTML = '<span style="flex:1">' + G.esc(msg) + '</span>' +
+      (href ? '<a class="btn btn-sm btn-gold" href="' + G.esc(href) + '">' + G.esc(label || 'Go') + '</a>' : '');
+    toastEl.classList.remove('hide');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { toastEl.classList.add('hide'); }, 6000);
+  }
+
+  window.GBoard = {
+    tierOf: tierOf, rowMarkup: rowMarkup, render: render, bind: bind,
+    reorder: reorder, stakes: stakes, fanStrip: fanStrip, toast: toast
+  };
 })();

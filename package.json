@@ -1,6 +1,13 @@
 {
-  "name": "outbid-lol",
+  "name": "goat-lol",
   "private": true,
   "type": "module",
-  "description": "Pay-to-rank hiring leaderboard. Static front end, no build step; Vercel functions use fetch and node:crypto only."
+  "description": "Pay-to-rank leaderboards for the greatest of all time. Static front end, no build step; Vercel functions use fetch and node:crypto only.",
+  "scripts": {
+    "seed:check": "node scripts/seed.js --check",
+    "seed": "node scripts/seed.js"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.33.0"
+  }
 }
