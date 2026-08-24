@@ -6,6 +6,52 @@
 -- below, which runs as a single locked transaction.
 
 -- ===========================================================================
+-- 0. RESET  --  read this before running
+--
+-- This database has held two earlier schemas (a hiring board, then a
+-- pay-to-rank job board). Their tables collide with these ones: the old `bids`
+-- keys on `entry_id` where this one keys on `person_id`, and `create table if
+-- not exists` silently keeps the old shape -- so the run dies at the first
+-- index with `column "person_id" does not exist`.
+--
+-- This block drops every table from those builds and from this one, so the
+-- script always starts from a known state and can be re-run safely.
+--
+-- IT DELETES DATA. On a database that has taken real money, delete this block
+-- and migrate by hand instead.
+-- ===========================================================================
+
+drop trigger if exists on_auth_user_created on auth.users;
+
+drop function if exists handle_new_user()               cascade;
+drop function if exists me()                            cascade;
+drop function if exists set_profile(text, boolean)      cascade;
+drop function if exists place_bid(uuid, int)            cascade;
+drop function if exists add_person(text, text, text, text) cascade;
+drop function if exists credit_balance(uuid, int)       cascade;
+drop function if exists record_visit()                  cascade;
+-- left over from the earlier builds
+drop function if exists on_bid_inserted()               cascade;
+drop function if exists on_click_inserted()             cascade;
+drop function if exists record_view(uuid)               cascade;
+
+-- this build
+drop table if exists fan_totals      cascade;
+drop table if exists topups          cascade;
+drop table if exists bids            cascade;
+drop table if exists people          cascade;
+drop table if exists users           cascade;
+-- earlier builds
+drop table if exists contact_reveals cascade;
+drop table if exists recruiter_notes cascade;
+drop table if exists clicks          cascade;
+drop table if exists entries         cascade;
+drop table if exists boards          cascade;
+-- same names, wrong shape
+drop table if exists categories      cascade;
+drop table if exists site_stats      cascade;
+
+-- ===========================================================================
 -- 1. TABLES
 -- ===========================================================================
 

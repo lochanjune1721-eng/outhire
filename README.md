@@ -112,6 +112,14 @@ that decision is final, so this is worth a conversation before more work goes in
 
 1. **Database** — paste `sql/schema.sql` into the Supabase SQL editor and run it.
    Tables, `place_bid`, `credit_balance`, RLS, realtime, and the `photos` bucket.
+
+   The script opens with a **reset block that drops and recreates every table**.
+   It is there because this project previously held two other schemas whose
+   tables collide with these — the old `bids` keys on `entry_id` where this one
+   keys on `person_id`, and `create table if not exists` silently keeps the old
+   shape, so the run dies at the first index. The reset makes the script
+   re-runnable from any state. **It deletes data** — on a database that has
+   taken real money, delete that block and migrate by hand.
 2. **Client keys** — put the Supabase URL and anon key into `js/config.js`. No
    build step, so env vars cannot reach static files; the anon key is public by
    design. Nothing secret goes there.
@@ -181,6 +189,29 @@ lawyer read them before you take money — stored balances in particular attract
 questions.
 
 ---
+
+## Verified against real Postgres
+
+The schema and `place_bid()` were exercised on a local Postgres 16 with a
+Supabase shim (`auth.users`, `auth.uid()`, `storage.*`, the three roles), not
+just read over. What passed:
+
+- the reported `column "person_id" does not exist` reproduced, fixed, and the
+  script then re-run three times cleanly on the same dirty database
+- $1 minimum, whole dollars, and insufficient balance all refused
+- the $5 rule: with the leader at $10, a $11 bid is refused with
+  *"needs $15 here, not $11"*, $14 is refused, $15 is accepted at rank 1
+- a bid that stays below the leader is never blocked, and topping up your own
+  leader is unconstrained
+- tie ordering: two people at $10 rank by who was backed first
+- `add_person` charges $1, seeds the person at $1 with one backer, and refuses
+  both a non-Wikipedia link and an unknown board
+- balance reconciles exactly across a run of bids, and `balance_never_negative`
+  rejects a manual overdraw
+- `credit_balance()` is unreachable by `anon` and `authenticated`
+- `anon` cannot read `users.email` or `users.balance_cents`, but can read
+  `display_name`
+- zero INSERT/UPDATE/DELETE policies exist on any table
 
 ## Quality floor
 
