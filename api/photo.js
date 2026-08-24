@@ -58,8 +58,80 @@ async function licence(file) {
   };
 }
 
+/* GET /api/photo — open this in a browser to find out why pictures are not
+   appearing. It reports booleans and counts only, never a key. */
+async function diagnose() {
+  const out = { ok: false, checks: {}, next: null };
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  out.checks.SUPABASE_URL_set = !!url;
+  out.checks.SUPABASE_SERVICE_ROLE_KEY_set = !!key;
+  if (!url || !key) {
+    out.next = 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel ' +
+               '(Project -> Settings -> Environment Variables), then redeploy. ' +
+               'Without them this endpoint cannot read or write anything.';
+    return out;
+  }
+
+  try {
+    const rows = await db.select('people', 'select=id&limit=1');
+    out.checks.people_table_readable = Array.isArray(rows);
+  } catch (e) {
+    out.checks.people_table_readable = false;
+    out.next = 'Cannot read the people table: ' + e.message +
+               '. Run sql/schema.sql and sql/seed.sql in the Supabase SQL editor.';
+    return out;
+  }
+
+  try {
+    const total = await sbFetch('/rest/v1/people?select=id&limit=1', { headers: { Prefer: 'count=exact' } });
+    out.checks.people_rows = Array.isArray(total) ? 'present' : 'unknown';
+  } catch { /* count is a nicety */ }
+
+  try {
+    const withPhoto = await db.select('people', 'select=slug&photo_path=not.is.null&limit=1000');
+    out.checks.people_with_photo = Array.isArray(withPhoto) ? withPhoto.length : 0;
+  } catch { out.checks.people_with_photo = 'unknown'; }
+
+  try {
+    const r = await fetch(`${REST}/page/summary/Lionel_Messi`, {
+      headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000)
+    });
+    out.checks.wikipedia_reachable = r.ok;
+    if (!r.ok) out.next = `Wikipedia returned ${r.status} from your deployment.`;
+  } catch (e) {
+    out.checks.wikipedia_reachable = false;
+    out.next = 'Your deployment cannot reach Wikipedia: ' + e.message;
+  }
+
+  try {
+    const b = await sbFetch('/storage/v1/bucket/photos');
+    out.checks.photos_bucket = !!b;
+  } catch (e) {
+    out.checks.photos_bucket = false;
+    out.next = out.next || 'The photos storage bucket is missing. Run sql/schema.sql.';
+  }
+
+  out.ok = Object.values(out.checks).every((v) => v !== false);
+  if (out.ok && !out.next) {
+    out.next = 'Everything checks out. Open a board and the pictures will fill in. ' +
+               'POST {"slug":"lionel-messi"} here to resolve one by hand.';
+  }
+  return out;
+}
+
 export default async function handler(request) {
-  if (request.method !== 'POST') return bad('Use POST.', 405);
+  if (request.method === 'GET') return json(await diagnose());
+  if (request.method !== 'POST') return bad('Use POST, or GET for a diagnosis.', 405);
+
+  // Fail loudly rather than returning a silent null nobody can debug.
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return json({
+      photo_path: null,
+      why: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set on this deployment. Open /api/photo in a browser for the full diagnosis.'
+    }, 500);
+  }
   try {
     const { slug } = await readJson(request);
     if (!slug || typeof slug !== 'string' || slug.length > 80) return bad('No person named.');
@@ -104,6 +176,6 @@ export default async function handler(request) {
     return json({ photo_path: path, credit: meta.author, license: meta.licence });
   } catch (e) {
     console.error('[photo]', e);
-    return json({ photo_path: null, why: 'lookup failed' });
+    return json({ photo_path: null, why: 'lookup failed: ' + (e && e.message ? e.message : String(e)) });
   }
 }

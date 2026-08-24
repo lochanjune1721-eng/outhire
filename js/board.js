@@ -124,7 +124,15 @@
         let p = missing[i++];
         try {
           let r = await G.api('/api/photo', { slug: p.slug });
-          if (!r || !r.photo_path) continue;
+          if (!r || !r.photo_path) {
+            // Say why, once, rather than leaving a silent wall of initials.
+            if (r && r.why && !fillPictures.warned) {
+              fillPictures.warned = true;
+              console.warn('[goat] no picture for ' + p.slug + ': ' + r.why +
+                '\nOpen /api/photo in a browser for a full diagnosis.');
+            }
+            continue;
+          }
           p.photo_path = r.photo_path;
           let sel = '[data-slug="' + (window.CSS && CSS.escape ? CSS.escape(p.slug) : p.slug) + '"]';
           // A leaderboard row wraps its .ph; a homepage tile IS the .ph.
@@ -142,7 +150,13 @@
           img.onload = function () { var old = box.querySelector('.initials, img'); if (old) old.replaceWith(img); };
           img.onerror = function () { /* keep the initials; they are a fine resting state */ };
           img.src = G.photoUrl(r.photo_path);
-        } catch (e) { /* leave the initials; they are a fine resting state */ }
+        } catch (e) {
+          if (!fillPictures.warned) {
+            fillPictures.warned = true;
+            console.warn('[goat] /api/photo failed: ' + (e && e.message) +
+              '\nOpen /api/photo in a browser for a full diagnosis.');
+          }
+        }
       }
     }
     // Gentle: three at a time, so a 50-row board does not stampede.
