@@ -1,136 +1,118 @@
-/* OUTHIRE — entry form. Validates in the browser, then hands off to
- * /api/checkout, which is the only thing allowed to create the row. */
+/* outbid.lol — entry form. Validates here, then hands to /api/checkout,
+ * which is the only thing allowed to create the row. */
 (function () {
   'use strict';
-
-  var OH = window.OH;
+  var OB = window.OB;
   var $ = function (s) { return document.querySelector(s); };
 
-  var form = $('#form');
-  if (!form) return;
+  var form = $('#form'); if (!form) return;
+  var side = OB.qs('side') === 'recruiter' ? 'recruiter' : 'candidate';
+  var boardSlug = OB.qs('board') || '';
+  var err = $('#form-error'), btn = $('#pay-btn'), bid = $('#bid');
 
-  var errBox = $('#form-error');
-  var btn = $('#submit-btn');
-  var amountEl = $('#submit-amount');
-  var bid = $('#bid');
-  var headline = $('#headline');
-  var count = $('#headline-count');
-  var select = $('#category_slug');
+  function fail(msg) { err.textContent = msg; err.classList.remove('hide'); err.scrollIntoView({ block: 'nearest' }); }
+  function clear() { err.classList.add('hide'); err.textContent = ''; }
+  function dollars() { var n = parseInt(bid.value, 10); return isNaN(n) ? 0 : n; }
+  function syncAmount() { $('#pay-amount').textContent = '$' + Math.max(0, dollars()).toLocaleString('en-US'); }
 
-  /* ------------------------------------------------------------------ */
+  /* ---------------------- recruiter vs candidate copy ---------------- */
 
-  function fail(msg) {
-    errBox.innerHTML = OH.esc(msg);
-    errBox.hidden = false;
-    errBox.scrollIntoView({ block: 'nearest' });
-  }
-  function clearFail() { errBox.hidden = true; errBox.innerHTML = ''; }
-
-  function dollars() {
-    var n = parseInt(bid.value, 10);
-    return isNaN(n) ? 0 : n;
-  }
-
-  function syncAmount() {
-    var d = dollars();
-    amountEl.textContent = '$' + (d > 0 ? d.toLocaleString('en-US') : '0');
+  if (side === 'recruiter') {
+    $('#page-title').textContent = 'Post an open role';
+    $('#page-lede').textContent = 'Fill this in, pay, then upload your logo. Minimum bid is $5.';
+    $('#lbl-name').innerHTML = 'Company name <span class="req">*</span>';
+    $('#lbl-email').innerHTML = 'Work email <span class="req">*</span>';
+    $('#lbl-url').innerHTML = 'Company URL <span class="req">*</span>';
+    $('#lbl-headline').innerHTML = 'One-liner <span class="req">*</span>';
+    $('#headline').placeholder = 'The role, and why someone should want it. One line.';
+    $('#hint-email').textContent = 'Never shown on the board. Your upload link goes here.';
+    $('#job-field').classList.remove('hide');
+    document.title = 'Post an open role — outbid.lol';
   }
 
+  /* ------------------------------ prefill ---------------------------- */
+
+  $('#url').value = OB.qs('url') || '';
+  var wanted = parseInt(OB.qs('bid'), 10);
+  if (!isNaN(wanted) && wanted >= 5) bid.value = String(wanted);
+
+  OB.CATEGORIES.forEach(function (c) {
+    var o = document.createElement('option'); o.textContent = c; $('#category').appendChild(o);
+  });
+  var preCat = OB.qs('category'); if (preCat) $('#category').value = preCat;
+
+  $('#headline').addEventListener('input', function () {
+    $('#headline-count').textContent = String($('#headline').value.length);
+  });
   bid.addEventListener('input', syncAmount);
   bid.addEventListener('change', syncAmount);
-
-  headline.addEventListener('input', function () {
-    count.textContent = String(headline.value.length);
-  });
-
-  /* --------------------------- categories --------------------------- */
-
-  OH.categories().then(function (cats) {
-    select.innerHTML = '<option value="">Pick one</option>' + cats.map(function (c) {
-      return '<option value="' + OH.esc(c.slug) + '">' + OH.esc(c.name) + '</option>';
-    }).join('');
-    var pre = OH.qs('category');
-    if (pre) select.value = pre;
-  });
-
-  /* ----------------------- claim context ---------------------------- */
-  /* Arrived from a "Claim this rank" button: prefill the bid and say plainly
-     what that money buys. */
-
-  (async function claimContext() {
-    var slug = OH.qs('claim');
-    var wanted = parseInt(OH.qs('bid'), 10);
-    if (!isNaN(wanted) && wanted >= 5) { bid.value = String(wanted); syncAmount(); }
-
-    var boardToken = OH.qs('board');
-    var box = $('#claim-context');
-
-    var lines = [];
-    if (slug) {
-      var target = await OH.getEntry(slug);
-      if (target) {
-        var rank = await OH.rankOf(target);
-        lines.push('You are claiming rank <span class="num">#' + OH.esc(String(rank)) +
-          '</span> from ' + OH.esc(target.display_name) + ', who is holding it at <span class="num">' +
-          OH.money(target.current_bid_cents) + '</span>. Anything above that takes the rank.');
-      }
-    }
-    if (boardToken) {
-      var board = await OH.getBoardByToken(boardToken);
-      if (board) {
-        lines.push('Your entry joins the board for ' + OH.esc(board.role_title || 'this role') +
-          (board.company_name ? ' at ' + OH.esc(board.company_name) : '') + ', and the main feed.');
-      }
-    }
-    if (lines.length) {
-      box.className = 'notice';
-      box.innerHTML = lines.join('</p><p style="margin-top:8px">');
-      box.hidden = false;
-    }
-  })();
-
   syncAmount();
 
-  /* ----------------------------- submit ----------------------------- */
+  /* Arrived from a "Claim this rank" button, or from a role board. */
+  (async function context() {
+    var box = $('#context');
+    var lines = [];
+
+    var claim = OB.qs('claim');
+    if (claim) {
+      var target = await OB.getEntry(claim);
+      if (target) {
+        lines.push('You are claiming the spot held by <b>' + OB.esc(target.display_name) +
+          '</b> at <b>' + OB.money(target.current_bid_cents) + '</b>. Anything above that takes the rank; ' +
+          'anything below still puts you on the board.');
+      }
+    }
+    if (boardSlug) {
+      var board = await OB.getBoard(boardSlug);
+      if (board) {
+        lines.push('This entry joins the board for <b>' + OB.esc(board.role_title || 'this role') +
+          (board.company_name ? '</b> at <b>' + OB.esc(board.company_name) : '') + '</b>.');
+        // Role boards are a flat $5, no bidding.
+        bid.value = '5'; bid.readOnly = true; syncAmount();
+        $('#bid-hint').innerHTML = 'Role boards are a flat <span class="num">$5</span>. No bidding.';
+      }
+    }
+    if (lines.length) { box.innerHTML = lines.join('<br>'); box.classList.remove('hide'); }
+  })();
+
+  /* ------------------------------ submit ----------------------------- */
 
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
-    clearFail();
+    clear();
 
     var data = {
+      side: side,
+      board_slug: boardSlug,
       display_name: $('#display_name').value.trim(),
       email: $('#email').value.trim(),
-      headline: headline.value.trim(),
-      portfolio_url: $('#portfolio_url').value.trim(),
-      linkedin_url: $('#linkedin_url').value.trim(),
-      category_slug: select.value,
-      job_url: $('#job_url').value.trim(),
-      board_token: OH.qs('board') || '',
+      url: $('#url').value.trim(),
+      headline: $('#headline').value.trim(),
+      category: $('#category').value,
+      job_url: side === 'recruiter' ? $('#job_url').value.trim() : '',
       amount_cents: dollars() * 100
     };
 
-    if (!data.display_name) return fail('Add a name. It is what the board lists you under.');
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) return fail('That email does not look right. The upload link has nowhere else to go.');
-    if (!data.headline) return fail('Add a headline. One line on what you did.');
-    if (data.headline.length > 140) return fail('Headline must be 140 characters or under. This one is ' + data.headline.length + '.');
-    if (!data.category_slug) return fail('Pick a role.');
-    if (data.portfolio_url && !OH.safeUrl(data.portfolio_url)) return fail('The portfolio URL needs to start with http or https.');
-    if (data.linkedin_url && !OH.safeUrl(data.linkedin_url)) return fail('The LinkedIn URL needs to start with http or https.');
-    if (data.job_url && !OH.safeUrl(data.job_url)) return fail('The job URL needs to start with http or https.');
-    if (data.amount_cents < 500) return fail('Minimum bid is $5. This one is ' + OH.moneyExact(data.amount_cents) + '.');
+    var who = side === 'recruiter' ? 'company name' : 'name';
+    if (!data.display_name) return fail('Add your ' + who + '. It is what the board lists you under.');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) return fail('That email does not look right. Your upload link has nowhere else to go.');
+    if (!OB.safeUrl(data.url)) return fail('That URL needs to start with http or https.');
+    if (!data.headline) return fail('Add your one-liner.');
+    if (data.headline.length > 120) return fail('The one-liner is capped at 120 characters. This one is ' + data.headline.length + '.');
+    if (!data.category) return fail('Choose a category.');
+    if (data.job_url && !OB.safeUrl(data.job_url)) return fail('That job listing URL needs to start with http or https.');
+    if (data.amount_cents < 500) return fail('Minimum bid is $5.');
 
     btn.disabled = true;
     var original = btn.innerHTML;
     btn.textContent = 'Opening Stripe';
-
     try {
-      var res = await OH.api('/api/checkout', data);
+      var res = await OB.api('/api/checkout', data);
       if (!res || !res.url) throw new Error('Checkout did not return a session.');
       window.location.href = res.url;
-    } catch (err) {
-      btn.disabled = false;
-      btn.innerHTML = original;
-      fail(err.message || 'Checkout failed. Nothing was charged.');
+    } catch (e2) {
+      btn.disabled = false; btn.innerHTML = original;
+      fail(e2.message || 'Checkout failed. Nothing was charged.');
     }
   });
 })();

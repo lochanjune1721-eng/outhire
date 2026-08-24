@@ -1,267 +1,153 @@
-/* OUTHIRE — post-payment video upload.
- * Everything is checked on the device first: duration off a hidden <video>,
- * aspect from videoWidth/videoHeight, size off the File. Only then does the
- * server mint a signed upload URL. */
+/* outbid.lol — post-payment media upload.
+ * Photos are resized to 800px square in the browser before they leave the
+ * device: these load on every page view and are the one thing that must be
+ * fast. The signed upload URL is minted server-side against the token. */
 (function () {
   'use strict';
-
-  var OH = window.OH;
+  var OB = window.OB;
   var $ = function (s) { return document.querySelector(s); };
 
-  var MAX_SECONDS = 45;
-  var MIN_SECONDS = 20;
-  var MAX_BYTES = 50 * 1024 * 1024;
+  var token = OB.qs('token');
+  var intro = $('#intro'), status = $('#status'), form = $('#uploader');
+  var fileInput = $('#file'), dz = $('#dropzone'), go = $('#go');
+  var errBox = $('#upload-error'), bar = $('#progress');
+  var chosen = null;   // { blob, dataUrl }
+  var MAX_BYTES = 5 * 1024 * 1024;
 
-  var token = OH.qs('token');
-  var intro = $('#intro');
-  var statusBox = $('#status');
-  var uploader = $('#uploader');
-  var fileInput = $('#file');
-  var dropzone = $('#dropzone');
-  var checks = $('#checks');
-  var preview = $('#preview');
-  var previewVideo = $('#preview-video');
-  var probe = $('#probe');
-  var errBox = $('#upload-error');
-  var uploadBtn = $('#upload-btn');
-  var progress = $('#progress');
-  var progressLabel = $('#progress-label');
-
-  var chosen = null;   // { file, duration, width, height }
-
-  function note(html, live) {
-    statusBox.className = 'notice' + (live ? ' notice-live' : '');
-    statusBox.innerHTML = html;
-    statusBox.hidden = false;
+  function say(msg, kind) {
+    status.textContent = msg;
+    status.className = 'notice' + (kind ? ' notice-' + kind : '');
   }
-  function fail(html) {
-    errBox.className = 'notice notice-live';
-    errBox.innerHTML = html;
-    errBox.hidden = false;
-  }
-  function clearFail() { errBox.hidden = true; errBox.innerHTML = ''; }
+  function fail(msg) { errBox.textContent = msg; errBox.classList.remove('hide'); }
+  function clearFail() { errBox.classList.add('hide'); errBox.textContent = ''; }
 
-  function setCheck(name, state, value) {
-    var li = checks.querySelector('[data-check="' + name + '"]');
-    if (!li) return;
-    li.setAttribute('data-state', state);
-    li.querySelector('.state').textContent = value;
+  function refresh() {
+    var video = OB.parseVideo($('#video').value);
+    go.disabled = !chosen && !video;
+    var hint = $('#video-hint');
+    var raw = $('#video').value.trim();
+    if (!raw) hint.textContent = '';
+    else if (video) hint.textContent = 'Recognised: ' + video.platform + '.';
+    else hint.textContent = 'That is not a YouTube or Vimeo link.';
   }
 
-  /* ------------------------------------------------------------------
-     Gate on the token before showing the form at all.
-     ------------------------------------------------------------------ */
+  /* ------------------- resize to 800px square, client-side ----------- */
+
+  function processImage(file) {
+    return new Promise(function (resolve, reject) {
+      if (!/^image\//.test(file.type)) return reject(new Error('That file is not an image.'));
+      if (file.size > MAX_BYTES) return reject(new Error('That image is ' + (file.size / 1048576).toFixed(1) + 'MB. The cap is 5MB.'));
+      var img = new Image();
+      var url = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var side = Math.min(img.naturalWidth, img.naturalHeight);
+        var out = Math.min(800, side);
+        var c = document.createElement('canvas');
+        c.width = out; c.height = out;
+        var ctx = c.getContext('2d');
+        // Centre-crop to a square, then scale. Matches the object-fit: cover
+        // the card uses, so what you see here is what the board renders.
+        ctx.drawImage(img,
+          (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side,
+          0, 0, out, out);
+        c.toBlob(function (blob) {
+          if (!blob) return reject(new Error('Could not read that image.'));
+          resolve({ blob: blob, dataUrl: c.toDataURL('image/jpeg', 0.85) });
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Could not read that image.')); };
+      img.src = url;
+    });
+  }
+
+  async function take(file) {
+    clearFail();
+    try {
+      chosen = await processImage(file);
+      $('#thumb-img').src = chosen.dataUrl;
+      $('#thumb').classList.remove('hide');
+      refresh();
+    } catch (e) { chosen = null; $('#thumb').classList.add('hide'); fail(e.message); refresh(); }
+  }
+
+  fileInput.addEventListener('change', function () { if (fileInput.files[0]) take(fileInput.files[0]); });
+  $('#video').addEventListener('input', refresh);
+
+  ['dragenter', 'dragover'].forEach(function (t) {
+    dz.addEventListener(t, function (e) { e.preventDefault(); dz.classList.add('is-over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (t) {
+    dz.addEventListener(t, function (e) { e.preventDefault(); dz.classList.remove('is-over'); });
+  });
+  dz.addEventListener('drop', function (e) {
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) take(f);
+  });
+
+  /* --------------------------- token check --------------------------- */
 
   (async function start() {
-    if (!token) {
-      intro.textContent = 'This page needs the upload link from your receipt email.';
-      note('No upload token in the address. The link in your email looks like <span class="num">/upload.html?token=…</span>. If you paid and never got it, reply to the receipt.');
-      return;
-    }
+    if (!token) { intro.textContent = 'This page needs the upload link that was emailed to you after payment.'; return; }
+    if (OB.OFFLINE) { intro.textContent = 'Supabase is not configured yet, so this link cannot be checked.'; return; }
     try {
-      var res = await OH.api('/api/upload-url', { action: 'status', token: token });
-      var e = res.entry;
-      intro.innerHTML = 'Filed as <strong>' + OH.esc(e.display_name) + '</strong>, bid <span class="num">' +
-        OH.money(e.current_bid_cents) + '</span>. One video, forty-five seconds or under.';
-      if (e.has_video && e.status === 'live') {
-        note('Your video is already up and the entry is live. <a href="/entry.html?slug=' + OH.esc(e.slug) + '">See it on the board</a>. Uploading again replaces it and sends the entry back to review.');
-      } else if (e.has_video) {
-        note('Your video is uploaded and waiting on review. Uploading again replaces it.');
-      }
-      uploader.hidden = false;
-    } catch (err) {
-      intro.textContent = 'That upload link is not valid.';
-      note(OH.esc(err.message || 'The token was not recognised.') + ' If you have paid, the link in your receipt email is the one that works.');
+      var r = await OB.api('/api/upload-url', { action: 'status', token: token });
+      intro.textContent = 'You are adding media for ' + r.entry.display_name + '. Add a photo, a video link, or both.';
+      if (r.entry.has_media) say('This spot already has media. Uploading again replaces it.', null), status.classList.remove('hide');
+      form.classList.remove('hide');
+      refresh();
+    } catch (e) {
+      intro.textContent = e.message || 'That upload link is not valid.';
     }
   })();
 
-  /* ------------------------------------------------------------------
-     File selection and local validation.
-     ------------------------------------------------------------------ */
+  /* ----------------------------- publish ----------------------------- */
 
-  fileInput.addEventListener('change', function () {
-    if (fileInput.files && fileInput.files[0]) inspect(fileInput.files[0]);
-  });
-
-  ['dragenter', 'dragover'].forEach(function (ev) {
-    dropzone.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.add('is-over'); });
-  });
-  ['dragleave', 'drop'].forEach(function (ev) {
-    dropzone.addEventListener(ev, function (e) { e.preventDefault(); dropzone.classList.remove('is-over'); });
-  });
-  dropzone.addEventListener('drop', function (e) {
-    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) inspect(f);
-  });
-
-  function readMetadata(file) {
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(file);
-      var done = false;
-      var timer = setTimeout(function () {
-        if (done) return;
-        done = true; URL.revokeObjectURL(url);
-        reject(new Error('The browser could not read that file as video.'));
-      }, 15000);
-
-      probe.onloadedmetadata = function () {
-        if (done) return;
-        done = true; clearTimeout(timer);
-        var meta = {
-          duration: probe.duration,
-          width: probe.videoWidth,
-          height: probe.videoHeight,
-          url: url
-        };
-        resolve(meta);
-      };
-      probe.onerror = function () {
-        if (done) return;
-        done = true; clearTimeout(timer); URL.revokeObjectURL(url);
-        reject(new Error('That file could not be decoded. Try an MP4.'));
-      };
-      probe.src = url;
-    });
-  }
-
-  async function inspect(file) {
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
     clearFail();
-    chosen = null;
-    uploadBtn.disabled = true;
-    checks.hidden = false;
-    preview.hidden = true;
-    progress.hidden = true;
-    progressLabel.hidden = true;
+    var video = OB.parseVideo($('#video').value);
+    if (!chosen && !video) return fail('Add a photo or a video link. At least one is required.');
+    if ($('#video').value.trim() && !video) return fail('That video link is not YouTube or Vimeo.');
 
-    if (!/^video\//.test(file.type) && !/\.(mp4|mov|m4v|webm)$/i.test(file.name)) {
-      return fail('That is not a video file.');
-    }
-
-    var meta;
-    try {
-      meta = await readMetadata(file);
-    } catch (err) {
-      return fail(OH.esc(err.message));
-    }
-
-    var seconds = meta.duration;
-    var sizeMb = file.size / (1024 * 1024);
-    var portrait = meta.height > meta.width;
-    var problems = [];
-
-    if (!isFinite(seconds) || seconds <= 0) {
-      setCheck('duration', 'fail', '—');
-      problems.push('The length of that file could not be read.');
-    } else if (seconds > MAX_SECONDS + 0.5) {
-      setCheck('duration', 'fail', OH.clock(seconds));
-      problems.push('Video must be under 45 seconds. This one is <span class="num">' + OH.clock(seconds) + '</span>.');
-    } else {
-      setCheck('duration', 'ok', OH.clock(seconds));
-    }
-
-    if (isFinite(seconds) && seconds > 0 && seconds < MIN_SECONDS) {
-      setCheck('min', 'fail', OH.clock(seconds));
-      problems.push('Minimum is 20 seconds. This one is <span class="num">' + OH.clock(seconds) + '</span>.');
-    } else {
-      setCheck('min', isFinite(seconds) && seconds >= MIN_SECONDS ? 'ok' : 'fail', isFinite(seconds) ? OH.clock(seconds) : '—');
-    }
-
-    if (!meta.width || !meta.height) {
-      setCheck('portrait', 'fail', '—');
-    } else if (!portrait) {
-      setCheck('portrait', 'fail', meta.width + '×' + meta.height);
-      problems.push('The feed is portrait only. This one is <span class="num">' + meta.width + '×' + meta.height + '</span>.');
-    } else {
-      setCheck('portrait', 'ok', meta.width + '×' + meta.height);
-    }
-
-    if (file.size > MAX_BYTES) {
-      setCheck('size', 'fail', sizeMb.toFixed(1) + 'MB');
-      problems.push('Files have to be under 50MB. This one is <span class="num">' + sizeMb.toFixed(1) + 'MB</span>.');
-    } else {
-      setCheck('size', 'ok', sizeMb.toFixed(1) + 'MB');
-    }
-
-    previewVideo.src = meta.url;
-    preview.hidden = false;
-
-    if (problems.length) {
-      fail(problems.join('</p><p style="margin-top:8px">'));
-      return;
-    }
-
-    chosen = { file: file, duration: Math.round(seconds), width: meta.width, height: meta.height };
-    uploadBtn.disabled = false;
-  }
-
-  /* ------------------------------------------------------------------
-     Upload. XHR, because fetch has no upload progress event.
-     ------------------------------------------------------------------ */
-
-  function put(url, file, headers, onProgress) {
-    return new Promise(function (resolve, reject) {
-      var xhr = new XMLHttpRequest();
-      xhr.open('PUT', url, true);
-      Object.keys(headers || {}).forEach(function (k) { xhr.setRequestHeader(k, headers[k]); });
-      xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable) onProgress(e.loaded / e.total);
-      };
-      xhr.onload = function () {
-        if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error('Storage rejected the upload (' + xhr.status + ').'));
-      };
-      xhr.onerror = function () { reject(new Error('The upload connection dropped.')); };
-      xhr.send(file);
-    });
-  }
-
-  uploadBtn.addEventListener('click', async function () {
-    if (!chosen) return;
-    clearFail();
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Uploading';
-    progress.hidden = false;
-    progressLabel.hidden = false;
-
-    function tick(fraction) {
-      var pct = Math.round(fraction * 100);
-      progress.firstElementChild.style.width = pct + '%';
-      progressLabel.textContent = pct + '%';
-    }
-    tick(0);
+    go.disabled = true; go.textContent = 'Publishing';
+    bar.classList.remove('hide');
+    var fill = bar.querySelector('i');
+    var path = null;
 
     try {
-      var signed = await OH.api('/api/upload-url', {
-        action: 'sign',
-        token: token,
-        filename: chosen.file.name,
-        content_type: chosen.file.type || 'video/mp4',
-        size: chosen.file.size
+      if (chosen) {
+        fill.style.width = '15%';
+        var signed = await OB.api('/api/upload-url', {
+          action: 'sign', token: token, content_type: 'image/jpeg'
+        });
+        fill.style.width = '35%';
+        var put = await fetch(signed.signed_url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'image/jpeg', 'x-upsert': 'true' },
+          body: chosen.blob
+        });
+        if (!put.ok) throw new Error('The upload was rejected (' + put.status + ').');
+        path = signed.path;
+        fill.style.width = '75%';
+      }
+
+      var done = await OB.api('/api/upload-url', {
+        action: 'complete', token: token, photo_path: path,
+        video_url: video ? $('#video').value.trim() : null,
+        video_platform: video ? video.platform : null
       });
-
-      await put(signed.signedUrl, chosen.file, {
-        'x-upsert': 'true',
-        'Content-Type': chosen.file.type || 'video/mp4'
-      }, tick);
-
-      tick(1);
-
-      await OH.api('/api/upload-url', {
-        action: 'complete',
-        token: token,
-        path: signed.path,
-        duration: chosen.duration
-      });
-
-      uploader.hidden = true;
-      intro.textContent = 'Uploaded.';
-      note('Your video is in. It goes to review before it appears on the board, which is usually the same day. You keep your bid and your rank while it is pending.');
-    } catch (err) {
-      progress.hidden = true;
-      progressLabel.hidden = true;
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = 'Upload and submit';
-      fail(OH.esc(err.message || 'The upload failed. Nothing was changed.'));
+      fill.style.width = '100%';
+      form.classList.add('hide');
+      status.classList.remove('hide');
+      say('Published. Your spot is in review and appears on the board once it is approved.', 'good');
+      if (done.slug) {
+        status.innerHTML += ' <a href="/entry.html?slug=' + OB.esc(done.slug) + '">See your entry</a>.';
+      }
+    } catch (e2) {
+      bar.classList.add('hide');
+      go.disabled = false; go.textContent = 'Publish my spot';
+      fail(e2.message || 'The upload failed. Nothing was lost — try again.');
     }
   });
 })();

@@ -3,143 +3,81 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Review — Outhire</title>
-<meta name="robots" content="noindex,nofollow">
-<meta name="theme-color" content="#EDEAE3">
+<title>Admin — outbid.lol</title>
+<meta name="theme-color" content="#FDFCFA">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body data-page="admin">
-
-<header class="masthead">
-  <div class="wrap">
-    <div class="masthead-inner">
-      <div><a class="wordmark display" href="/">Outhire</a></div>
-      <div class="stats" id="admin-stats" hidden>
-        <div class="stat"><div class="stat-val num" id="c-pending">—</div><div class="stat-key">Pending</div></div>
-        <div class="stat"><div class="stat-val num" id="c-live">—</div><div class="stat-key">Live</div></div>
-        <div class="stat"><div class="stat-val num" id="c-rejected">—</div><div class="stat-key">Rejected</div></div>
-      </div>
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
     </div>
-  </div>
-  <nav class="nav" aria-label="Primary">
-    <div class="wrap" style="display:flex;flex-wrap:wrap">
+    <nav class="mainnav" aria-label="Primary">
       <a href="/">Leaderboard</a>
-      <a href="/admin.html" aria-current="page">Review</a>
-    </div>
-  </nav>
-</header>
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
 
-<main class="wrap page">
-
-  <!-- Gate. The password is only ever checked by /api/admin. -->
-  <section id="gate" class="wrap-narrow" style="padding:0">
-    <h1 class="display">Review</h1>
-    <p class="lede">Approve entries, reject them, and grant free ones for seeding.</p>
-    <form class="form" id="login-form" novalidate>
-      <div class="field">
-        <label for="password">Password</label>
-        <input id="password" type="password" autocomplete="current-password" required>
-      </div>
-      <div id="login-error" class="notice" hidden></div>
-      <div class="form-actions">
-        <button class="btn-claim" type="submit" id="login-btn" style="width:auto;min-width:180px">Unlock</button>
-      </div>
-    </form>
-  </section>
-
-  <!-- Console -->
-  <section id="console" hidden>
-    <div class="section-head">
-      <h1 class="section-title">Queue</h1>
-      <div class="tabs" role="group" aria-label="Status">
-        <button class="chip" type="button" data-status="pending" aria-pressed="true">Pending</button>
-        <button class="chip" type="button" data-status="live" aria-pressed="false">Live</button>
-        <button class="chip" type="button" data-status="rejected" aria-pressed="false">Rejected</button>
-      </div>
-    </div>
-
-    <div id="admin-error" class="notice" hidden></div>
-
-    <div class="table-scroll">
-      <table class="ledger">
-        <caption class="sr-only">Entries awaiting review</caption>
-        <thead>
-          <tr>
-            <th class="c-rank" scope="col">Bid</th>
-            <th class="c-name" scope="col">Entry</th>
-            <th class="c-role" scope="col">Role</th>
-            <th class="c-click" scope="col">Length</th>
-            <th class="c-when" scope="col">Filed</th>
-            <th class="c-act" scope="col"><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody id="rows"><tr><td colspan="6" class="muted">Loading.</td></tr></tbody>
-      </table>
-    </div>
-
-    <hr class="hairline" style="margin:40px 0 0">
-
-    <div class="wrap-narrow" style="padding:0">
-      <h2 class="section-title" style="margin-top:32px">Grant a free entry</h2>
-      <p class="hint">For seeding. Creates a paid-looking entry at the bid you set without charging anything, and gives you an upload link to pass on.</p>
-
-      <form class="form" id="grant-form" novalidate>
-        <div class="grid-2">
-          <div class="field">
-            <label for="g_name">Name</label>
-            <input id="g_name" type="text" maxlength="80" required>
-          </div>
-          <div class="field">
-            <label for="g_email">Email</label>
-            <input id="g_email" type="email" maxlength="200" required>
-          </div>
+  <main class="page">
+    <div id="login" class="wrap-narrow" style="padding:0">
+      <h1>Admin</h1>
+      <p class="lede">The password is checked on the server. It is never compared in the browser.</p>
+      <form class="card" style="margin-top:24px" id="login-form">
+        <div class="field" style="margin-top:0">
+          <label for="pw">Password</label>
+          <input id="pw" type="password" autocomplete="current-password" required>
         </div>
-        <div class="field">
-          <label for="g_headline">Headline</label>
-          <input id="g_headline" type="text" maxlength="140" required>
-        </div>
-        <div class="grid-2">
-          <div class="field">
-            <label for="g_portfolio">Portfolio URL</label>
-            <input id="g_portfolio" type="url" placeholder="https://">
-          </div>
-          <div class="field">
-            <label for="g_linkedin">LinkedIn</label>
-            <input id="g_linkedin" type="url" placeholder="https://">
-          </div>
-        </div>
-        <div class="grid-2">
-          <div class="field">
-            <label for="g_category">Role</label>
-            <span class="select-wrap">
-              <select id="g_category" required><option value="">Pick one</option></select>
-            </span>
-          </div>
-          <div class="field">
-            <label for="g_bid">Bid</label>
-            <div class="money-input">
-              <span class="prefix">$</span>
-              <input id="g_bid" type="number" min="0" step="1" value="5">
-            </div>
-            <p class="hint">Counts on the board. Does not touch the revenue total.</p>
-          </div>
-        </div>
-        <div id="grant-result" class="notice" hidden></div>
-        <div class="form-actions">
-          <button class="btn-claim" type="submit" id="grant-btn" style="width:auto;min-width:200px">Grant entry</button>
-          <button class="btn btn-ghost" type="button" id="logout-btn">Lock</button>
-        </div>
+        <div id="login-error" class="notice notice-bad hide"></div>
+        <div style="margin-top:18px"><button class="btn btn-primary" type="submit">Sign in</button></div>
       </form>
     </div>
-  </section>
-</main>
 
+    <div id="panel" class="hide">
+      <div class="section-head">
+        <h1>Queue</h1>
+        <div class="pill-group" role="group" aria-label="Filter by status">
+          <button class="pill" type="button" data-status="pending" aria-pressed="true">Pending</button>
+          <button class="pill" type="button" data-status="live" aria-pressed="false">Live</button>
+          <button class="pill" type="button" data-status="rejected" aria-pressed="false">Rejected</button>
+        </div>
+      </div>
+      <div class="card" id="rows"><p class="muted">Loading.</p></div>
+
+      <div class="card" style="margin-top:22px">
+        <h2>Grant a free spot</h2>
+        <p class="hint" style="margin-top:6px">Creates a live entry with no payment and returns an upload link. For seeding only.</p>
+        <div class="grid2">
+          <div class="field"><label for="g_name">Name</label><input id="g_name" type="text"></div>
+          <div class="field"><label for="g_email">Email</label><input id="g_email" type="email"></div>
+        </div>
+        <div class="field"><label for="g_url">URL</label><input id="g_url" type="url" placeholder="https://"></div>
+        <div class="field"><label for="g_headline">One-liner</label><input id="g_headline" type="text" maxlength="120"></div>
+        <div class="grid2">
+          <div class="field"><label for="g_side">Side</label><span class="select-wrap"><select id="g_side"><option value="candidate">Looking for work</option><option value="recruiter">Hiring</option></select></span></div>
+          <div class="field"><label for="g_category">Category</label><span class="select-wrap"><select id="g_category"></select></span></div>
+        </div>
+        <div id="grant-result" class="notice hide"></div>
+        <div style="margin-top:18px"><button class="btn btn-primary" type="button" id="grant">Grant</button></div>
+      </div>
+    </div>
+  </main>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/config.js"></script>
 <script src="/js/supabase.js"></script>
 <script src="/js/admin.js"></script>
-</body>
-</html>

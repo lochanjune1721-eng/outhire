@@ -1,103 +1,65 @@
-/* POST /api/webhook — Stripe events.
- *
- * On checkout.session.completed: verify the signature against the raw body,
- * insert the bid (unique on stripe_session_id, so replays are free), mint an
- * upload token if the entry has none, and email the link.
- *
- * The database trigger on `bids` is what raises entries.current_bid_cents,
- * stamps last_bid_at and adds to site_stats.total_revenue_cents.
- */
+/* POST /api/webhook — Stripe. On checkout.session.completed: verify the
+ * signature over the raw body, insert the bid (unique on stripe_session_id
+ * for idempotency), set the entry live, mint an upload token and email it. */
 import {
-  json, readJson, env, db, selectOne, insertRow, updateRow, token,
-  verifyStripeSignature, sendUploadEmail, siteUrl
+  json, bad, env, db, verifyStripeSignature, randomToken, sendMail, siteUrl, sbFetch
 } from './_lib.js';
 
-// The raw body is required for the signature, so nothing may parse it first.
-export const config = { api: { bodyParser: false } };
-
 export default async function handler(request) {
-  if (request.method !== 'POST') return json({ error: 'Method not allowed.' }, 405);
+  if (request.method !== 'POST') return bad('Use POST.', 405);
 
-  var raw = await request.text();
-  var signature = request.headers.get('stripe-signature');
+  // Web-standard handler, so the raw body is available for the HMAC.
+  const raw = await request.text();
+  const sig = request.headers.get('stripe-signature');
 
-  var secret;
-  try { secret = env('STRIPE_WEBHOOK_SECRET'); }
-  catch (e) { console.error('[outhire] webhook secret missing'); return json({ error: 'Not configured.' }, 500); }
-
-  if (!verifyStripeSignature(raw, signature, secret)) {
-    return json({ error: 'Signature verification failed.' }, 400);
+  if (!verifyStripeSignature(raw, sig, env('STRIPE_WEBHOOK_SECRET'))) {
+    return bad('Invalid signature.', 400);
   }
 
-  var event;
-  try { event = JSON.parse(raw); }
-  catch (e) { return json({ error: 'Malformed payload.' }, 400); }
+  let event;
+  try { event = JSON.parse(raw); } catch { return bad('Malformed payload.'); }
+  if (event.type !== 'checkout.session.completed') return json({ received: true });
 
-  if (event.type !== 'checkout.session.completed') {
-    return json({ received: true, ignored: event.type });
-  }
-
-  var session = event.data && event.data.object;
-  if (!session) return json({ received: true });
-
-  // Only money that actually settled counts as a bid.
-  if (session.payment_status !== 'paid') {
-    return json({ received: true, ignored: 'unpaid' });
-  }
-
-  var meta = session.metadata || {};
-  var entryId = meta.entry_id || session.client_reference_id;
-  var amount = parseInt(meta.amount_cents, 10);
-  if (!Number.isFinite(amount)) amount = session.amount_total;
-
-  if (!entryId || !Number.isFinite(amount) || amount <= 0) {
-    console.error('[outhire] webhook missing entry_id or amount', session.id);
-    return json({ received: true, ignored: 'incomplete metadata' });
-  }
+  const session = event.data.object;
+  const entryId = session.metadata?.entry_id || session.client_reference_id;
+  const amount = Number(session.metadata?.amount_cents || session.amount_total || 0);
+  if (!entryId || !amount) return json({ received: true, skipped: 'no entry on session' });
 
   try {
-    /* ----------------------------- the bid --------------------------- */
-    /* Unique on stripe_session_id. resolution=ignore-duplicates makes a
-       redelivered event a no-op instead of a second charge on the ledger. */
-
-    var inserted = await db('bids', {
+    /* Idempotency: stripe_session_id is unique, and ignore-duplicates makes a
+       replayed webhook a no-op rather than a second bid. */
+    const inserted = await sbFetch('/rest/v1/bids?on_conflict=stripe_session_id', {
       method: 'POST',
-      body: { entry_id: entryId, amount_cents: amount, stripe_session_id: session.id },
-      headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }
+      headers: { Prefer: 'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify({ entry_id: entryId, amount_cents: amount, stripe_session_id: session.id })
     });
-
-    var isNew = Array.isArray(inserted) && inserted.length > 0;
-    if (!isNew) {
+    if (Array.isArray(inserted) && inserted.length === 0) {
       return json({ received: true, duplicate: true });
     }
 
-    /* --------------------------- upload token ------------------------ */
+    const entry = await db.one('entries', db.eq('id', entryId));
+    if (!entry) return json({ received: true, skipped: 'entry gone' });
 
-    var entry = await selectOne(
-      'entries?id=eq.' + encodeURIComponent(entryId) +
-      '&select=id,slug,email,display_name,upload_token,video_path,status&limit=1'
-    );
-    if (!entry) {
-      console.error('[outhire] webhook could not find entry', entryId);
-      return json({ received: true, warning: 'entry missing' });
+    let token = entry.upload_token;
+    if (!token) {
+      token = randomToken(24);
+      await db.update('entries', db.eq('id', entryId), { upload_token: token });
     }
 
-    var uploadToken = entry.upload_token;
-    if (!uploadToken) {
-      uploadToken = token(24);
-      await updateRow('entries', 'id=eq.' + encodeURIComponent(entryId), { upload_token: uploadToken });
-    }
+    const link = `${siteUrl(request)}/upload.html?token=${encodeURIComponent(token)}`;
+    await sendMail({
+      to: entry.email,
+      subject: 'Your outbid.lol spot — add your photo',
+      text:
+        `You're on the board.\n\n` +
+        `Add your photo or a video link here, and your spot goes into review:\n${link}\n\n` +
+        `This link is yours alone. Don't share it.\n`
+    });
 
-    /* ------------------------------ email ---------------------------- */
-
-    var uploadUrl = siteUrl(request) + '/upload.html?token=' + encodeURIComponent(uploadToken);
-    if (entry.email) await sendUploadEmail(entry.email, entry, uploadUrl);
-
-    return json({ received: true, entry: entry.slug });
-
-  } catch (err) {
-    console.error('[outhire] webhook handling failed', err);
-    // 500 asks Stripe to retry; the ignore-duplicates insert keeps that safe.
-    return json({ error: 'Webhook handling failed.' }, 500);
+    return json({ received: true });
+  } catch (e) {
+    console.error('[webhook]', e);
+    // 500 so Stripe retries rather than dropping a paid bid on the floor.
+    return bad('Webhook processing failed.', 500);
   }
 }

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recruiters — outbid.lol</title>
+<meta name="theme-color" content="#FDFCFA">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="recruiter">
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
+    </div>
+    <nav class="mainnav" aria-label="Primary">
+      <a href="/">Leaderboard</a>
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
+
+  <main class="page" id="recruiter-page">
+    <div id="auth-view">
+      <div class="wrap-narrow" style="padding:0">
+        <h1>Recruiter login</h1>
+        <p class="lede">Sign in with your work email to see everyone who applied to your roles. We send a magic link — no password.</p>
+        <form class="card" style="margin-top:24px" id="login-form">
+          <div class="field" style="margin-top:0">
+            <label for="work-email">Work email <span class="req">*</span></label>
+            <input id="work-email" type="email" autocomplete="email" placeholder="you@company.com" required>
+            <p class="hint">Free inboxes are not accepted — the domain has to match the company on the listing.</p>
+          </div>
+          <div id="login-error" class="notice notice-bad hide"></div>
+          <div style="margin-top:18px"><button class="btn btn-primary" type="submit" id="send-link">Send the magic link</button></div>
+        </form>
+      </div>
+    </div>
+
+    <div id="dash-view" class="hide">
+      <div class="section-head" style="margin-bottom:20px">
+        <div>
+          <h1 id="dash-title">Your boards</h1>
+          <p class="lede" id="dash-sub"></p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <div class="pill-group" role="group" aria-label="Sort applicants">
+            <button class="pill" type="button" data-sort="new" aria-pressed="true">Newest</button>
+            <button class="pill" type="button" data-sort="clicks" aria-pressed="false">Most clicks</button>
+          </div>
+          <button class="btn btn-sm" type="button" id="signout">Sign out</button>
+        </div>
+      </div>
+      <div id="dash-body"><p class="empty">Loading your boards.</p></div>
+    </div>
+  </main>
+  <footer class="foot"><a href="/">Back to the leaderboard</a></footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/config.js"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/recruiter.js"></script>

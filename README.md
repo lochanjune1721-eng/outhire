@@ -1,159 +1,197 @@
-# Outhire
+# outbid.lol
 
-A public leaderboard of people bidding on themselves. Candidates film forty-five
-seconds on why they should be hired, attach a portfolio and a LinkedIn, and pay
-to hold a rank. Recruiters browse by role or create a shareable board to drop
-into their own job post. Minimum bid $5.
+A pay-to-rank hiring leaderboard, in two directions.
 
-Plain HTML, CSS and JavaScript. No framework, no bundler, no build step.
-Supabase over the CDN script tag for the database and storage; Vercel functions
-for everything the browser is not allowed to do.
+**Candidates** pay to appear with their portfolio, a one-line pitch, and a photo
+or video. **Recruiters** pay to appear with their open role. Both boards sit on
+the same homepage behind one toggle. Separately, anyone can paste a job link
+from a real hiring platform, which spawns a board for that specific role — flat
+$5 to appear on it, and the recruiter signs in to see everyone who applied.
+
+Vanilla HTML, CSS and JavaScript. No framework, no bundler, no build step.
+Supabase over the CDN script tag. Vercel functions only for what the browser
+must not do.
 
 ---
 
-## Layout
+## The tapering leaderboard
+
+The signature mechanic: card size scales down with rank, so #1 physically
+dominates the page and each step down is visibly smaller. No copy has to argue
+that the top spot is worth paying for.
+
+| Rank | Padding | Media | Title | One-liner | Bid | Fill |
+|---|---|---|---|---|---|---|
+| #1 | 40px | 180px | 32/700 | 20px | 36px | `--accent-lo`, 2px coral border |
+| #2 | 32px | 140px | 26/700 | 18px | 30px | `--accent-xlo` |
+| #3 | 28px | 120px | 22/700 | 16px | 26px | `--accent-xxlo` |
+| #4–10 | 24px | 96px | 19/600 | 15px | 22px | white |
+| #11–25 | 20px | 72px | 17/600 | 14px | 19px | white |
+| #26+ | 16px | 56px | 16/600 | 14px | 17px | white |
+
+Rank maps to a tier, and the tier sets every size through CSS custom properties
+— one lookup rather than six templates (`js/board.js` → `tierOf`).
+
+**Media never loads forty iframes.** A row renders a still: the photo, or the
+video platform's thumbnail with a coral play button over it. The `<iframe>` is
+created only when someone clicks. If both a photo and a video are supplied, the
+photo is the thumbnail and the play button sits on it. Missing images fall back
+to a coral monogram tile rather than a broken frame.
+
+---
+
+## Files
 
 ```
-index.html         feed + leaderboard
-submit.html        entry form
-upload.html        post-payment video upload (?token=)
-entry.html         single entry (?slug=)
-recruiters.html    create a board
-board.html         recruiter board (?token=)
-admin.html         approve / reject / grant
+index.html        homepage — header, side toggle, tapering board, activity, pagination
+submit.html       entry form for both sides
+upload.html       post-payment photo/video (?token=)
+entry.html        one entry (?slug=)
+job.html          paste a job link, confirm the parse, spawn a board
+board.html        a role board (?slug=)
+recruiter.html    magic-link login + applicant dashboard
+admin.html        approve / reject / grant
 
-css/style.css
-js/config.js       the two client-safe keys
-js/supabase.js     client init + shared queries + formatting
-js/feed.js         feed, sidebar, activity, ledger table, entry page
-js/submit.js
-js/upload.js
-js/board.js        recruiters.html + board.html
-js/admin.js
+css/style.css     the whole design system
+js/config.js      the two client-safe keys
+js/supabase.js    client, shared queries, formatting, theme
+js/board.js       the tapering board (shared by homepage and role boards)
+js/submit.js  js/upload.js  js/job.js  js/roleboard.js
+js/recruiter.js  js/entry.js  js/admin.js
 
-api/_lib.js        server helpers (not a route)
-api/checkout.js    Stripe Checkout session
-api/webhook.js     Stripe webhook
-api/upload-url.js  signed upload URL, issued only after payment
-api/board.js       board creation
-api/admin.js       password check + review actions
+api/_lib.js       shared serverless helpers
+api/checkout.js   Stripe Checkout, destination charge
+api/webhook.js    checkout.session.completed → bid, upload token, email
+api/parse-job.js  whitelist → fetch → LLM extract → confirm → create board
+api/upload-url.js signed storage upload against a paid token
+api/recruiter.js  shortlist, notes, contact reveals
+api/admin.js      server-side password check
 
-sql/schema.sql     tables, triggers, RLS, storage, category seed
-vercel.json
+sql/schema.sql    tables, triggers, RLS, storage, the one seed entry
 ```
+
+---
 
 ## Setup
 
-**1. Database.** Open the Supabase SQL editor and run `sql/schema.sql` once. It
-creates the tables, the triggers, the RLS policies, the `videos` bucket and the
-fixed category list.
+**1. Database.** Paste `sql/schema.sql` into the Supabase SQL editor and run it.
+It creates every table, the bid and click triggers, RLS, the `photos` bucket,
+and the single seed entry.
 
-**2. Client keys.** Put the project URL and the anon key into `js/config.js`.
-There is no build step, so Vercel environment variables cannot reach static
-files — these two are the ones the spec marks as safe in client JS, and they
-ship with the site. Leave the placeholders alone and the site runs against a
-built-in demo ledger of twenty-six entries, which is how you check the feed
-feels right before wiring anything up.
+**2. Client keys.** Put your Supabase URL and anon key into `js/config.js`.
+There is no build step, so Vercel env vars cannot reach static files — the anon
+key is public by design and ships in that file. Nothing secret goes there.
 
-**3. Environment.** Set everything in `.env.example` in the Vercel dashboard.
-`SUPABASE_SERVICE_ROLE_KEY` is read inside `/api` only and appears in no file
-the browser downloads.
+**3. Vercel env.** Copy `.env.example` into the project's environment variables.
 
-**4. Stripe webhook.** Point a webhook at `https://<your-domain>/api/webhook`
-for `checkout.session.completed` and put its signing secret in
-`STRIPE_WEBHOOK_SECRET`. Payments are destination charges to
-`STRIPE_CONNECT_ACCOUNT_ID`.
+**4. Stripe webhook.** Point it at `https://yourdomain/api/webhook` for
+`checkout.session.completed` and copy the signing secret into
+`STRIPE_WEBHOOK_SECRET`.
 
-**5. Email.** Optional. With `RESEND_API_KEY` set, the upload link is emailed on
-payment. Without it the link is written to the function log, so the flow still
-completes — check the log, send it by hand, or grant the entry from
-`/admin.html` instead.
+**5. Seed.** Before running the schema, replace the seed headline with your own
+one-liner and upload your photo to the `photos` bucket as `seed/lochan.jpg`.
+The board then shows one card at #1 and the empty state below it.
 
-**6. Seed.** Open `/admin.html`, unlock with `ADMIN_PASSWORD`, and grant twenty
-to thirty free entries. Each one comes back with an upload link to pass on. A
-granted entry sets its bid directly and does not touch the revenue counter, so
-seeding does not inflate the number in the masthead. Approve each entry once its
-video is in, then turn payment on.
+Left unconfigured, the site renders that one seed entry and the empty state. It
+does **not** generate placeholder companies or fake candidates — an obviously
+fake board is worse than an empty one.
 
-## How money moves
+---
 
-1. `submit.html` posts to `/api/checkout`.
-2. `/api/checkout` finds the caller's entry by email, or creates one at
-   `status = 'pending'`, then opens a Stripe Checkout session carrying the entry
-   id in metadata.
-3. Stripe calls `/api/webhook`. The signature is verified against the raw body,
-   then a row goes into `bids`, unique on `stripe_session_id` — a redelivered
-   event is a no-op rather than a second line on the ledger.
-4. The trigger on `bids` raises `entries.current_bid_cents`, stamps
-   `last_bid_at`, and adds the amount to `site_stats.total_revenue_cents`.
-5. The webhook mints an `upload_token` and emails the upload link.
-6. `upload.html` validates the file on the device, gets a signed URL from
-   `/api/upload-url`, uploads, and sets the entry back to `pending`.
-7. `/admin.html` approves it and it goes live.
+## How the money works
 
-One person holds one entry per board. A second payment raises the bid on the
-entry they already have rather than filing a duplicate.
+`/api/checkout` finds or creates the entry as `pending`, then opens a Stripe
+Checkout session as a Connect **destination charge** to
+`STRIPE_CONNECT_ACCOUNT_ID`. Minimum $5. Role boards are a flat $5 with no
+bidding; the homepage board bids.
 
-## Notes on the build
+Re-entering the same URL on the same side finds the existing row instead of
+duplicating it — that is what makes *"enter the same URL and up your bid"* work.
 
-**Five serverless functions, not two.** The spec asks for two, on the grounds
-that only Stripe needs a server. Three more are structurally required by the
-rest of the spec, not by choice:
+`/api/webhook` verifies the Stripe signature over the raw request body
+(`node:crypto` HMAC, constant-time compare, 5-minute tolerance), inserts the bid
+with `resolution=ignore-duplicates` on the unique `stripe_session_id` so a
+replayed webhook is a no-op, mints an `upload_token`, and emails the upload
+link. A database trigger raises `entries.current_bid_cents`, stamps
+`last_bid_at`, and adds to `site_stats.total_revenue_cents`.
 
-- `api/upload-url.js` — the bucket has public read and no public write, and
-  uploads use "a signed URL issued only after payment". Minting that URL needs
-  the service role key, so it cannot happen in the browser.
-- `api/admin.js` — the spec requires the admin password to be "checked against a
-  serverless endpoint, never client-side", and approve/reject writes to
-  `entries`, which RLS gives the anon key no path to.
-- `api/board.js` — `boards` is public-read but not public-write, so creating one
-  from `recruiters.html` needs the service role key too.
+---
 
-Each one exists because RLS is correct, not because it was loosened.
+## Job boards from pasted links
 
-**Two additions to the schema.** Both are marked in `sql/schema.sql`:
+The domain whitelist is checked **first, before anything touches the network** —
+that is what stops people spawning boards for jobs that do not exist. It lives
+in `api/parse-job.js`; the copy in `js/supabase.js` only gives a faster answer.
 
-- `site_stats.visit_count` plus a `record_visit()` function. The masthead prints
-  "X visitors since launch" and nothing in the given schema counts visits.
-  A security-definer function keeps the table read-only to the public.
-- A trigger on `clicks` and a `record_view()` function, because `click_count`
-  and `view_count` live on `entries`, which the anon key cannot update.
+**The manual path is built first, not second.** LinkedIn blocks server-side
+fetches, so a failed fetch is the designed outcome, not an error state: the page
+shows a paste-the-description form and editable fields. Either way the parsed
+result always comes back for confirmation — nothing is written until the caller
+sends a confirmed payload.
 
-**No npm dependencies.** Stripe is called over its REST API with `fetch`,
-Supabase over PostgREST, and the webhook signature is verified with
-`node:crypto`. Nothing installs, so nothing builds.
+Boards deduplicate on a normalised URL (tracking params stripped, LinkedIn's
+`currentJobId` and Indeed's `jk` preserved), so two links to the same posting
+join one board.
 
-## Design
+**The model is deliberately not pinned.** `LLM_PROVIDER` picks the wire format:
 
-Five colours, and only five:
+- `openai` (default) — any OpenAI-compatible `/chat/completions` endpoint, which
+  is what DeepSeek, OpenAI, Together, Groq and vLLM all speak. Set
+  `LLM_BASE_URL` and `LLM_MODEL`.
+- `anthropic` — the Anthropic Messages API.
 
-| Token     | Value     | Used for                          |
-| --------- | --------- | --------------------------------- |
-| `--paper` | `#EDEAE3` | all chrome                        |
-| `--ink`   | `#12100E` | all text                          |
-| `--rule`  | `#C4BFB4` | hairlines and borders             |
-| `--live`  | `#E8422C` | live indicators, the #1 bid, focus |
-| `--field` | `#1C1A17` | video letterbox surround          |
+With no `LLM_API_KEY` at all it degrades to the manual form rather than erroring.
 
-Anton for the rank numbers and page headlines, Inter for body text, JetBrains
-Mono with tabular figures for every numeral on the site — that is what makes it
-read as a record rather than a feed. Hairline borders, no radius except avatars,
-no gradients, no shadows. The rank sits at 180px behind the video: in the
-letterbox margin on desktop, bleeding off the top-left corner on mobile.
+---
 
-Motion is close to nothing. Activity rows slide in from the top, the revenue
-counter ticks up once on load, and the feed scroll-snaps. All three stop under
-`prefers-reduced-motion`. The layout holds to 360px, and keyboard focus is a
-`--live` outline everywhere.
+## Protecting candidates
 
-## Local
+Verification stops the lazy fakes; message-flow design stops the rest.
 
-Any static server plus the Vercel CLI for the functions:
+- Recruiter sign-in is a Supabase magic link, work email only. Free and
+  disposable inboxes are blocked in the browser *and* on the server.
+- The email domain must match the board's `company_domain`. A mismatch is
+  **flagged for manual review, not rejected** — small startups use odd domains.
+- **Candidate emails are unreadable with the anon key at all.** RLS is
+  row-level and cannot hide a column, so `sql/schema.sql` revokes `SELECT` on
+  `entries` and grants back every column *except* `email` and `upload_token`.
+  The only route to a candidate's address is `/api/recruiter` with
+  `action: 'reveal'`, which writes a `contact_reveals` audit row and emails the
+  candidate that it happened.
 
-```
-vercel dev
-```
+---
 
-Without the CLI, `python3 -m http.server` serves the pages. The `/api` routes
-will 404, so checkout, upload and admin do not work, but the feed, the
-leaderboard and the demo ledger all render.
+## Security notes
+
+- `SUPABASE_SERVICE_ROLE_KEY` is read only inside `/api` and appears in nothing
+  the browser downloads.
+- No public writes to `entries` or `bids`. The anon key can insert into `clicks`
+  and call `record_visit()`; that is all.
+- The `photos` bucket has public read and **no** write policy. Uploads use a
+  signed URL minted server-side against a paid `upload_token`.
+- The admin password is compared with a constant-time equal inside
+  `/api/admin`, never in the browser. Login returns a short-lived HMAC token so
+  the password itself is not held in the page.
+- Outbound entry links carry `rel="noopener noreferrer nofollow"`.
+
+## No npm dependencies
+
+The serverless functions call Stripe over its REST API, Supabase over PostgREST,
+and hash the webhook HMAC with `node:crypto`. `package.json` exists only to set
+`"type": "module"`. Nothing installs, nothing builds.
+
+## Performance
+
+Photos are centre-cropped and resized to 800px square **in the browser** before
+upload, matching the `object-fit: cover` the cards use — what you see in the
+preview is what the board renders. They load on every page view and are the one
+thing that has to be fast. All below-the-fold images are `loading="lazy"`.
+
+## Quality floor
+
+Responsive to 360px, verified in headless Chromium at 360 / 768 / 1440 — the
+taper still applies on mobile, and on #1 the media stacks above the text when
+there is a real photo. Keyboard focus is a coral ring. Dark mode is a header
+toggle persisted in `localStorage`. `prefers-reduced-motion` is respected, and
+where hover is unavailable the claim button is permanently visible rather than
+unreachable.

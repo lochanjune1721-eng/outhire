@@ -1,305 +1,273 @@
-/* OUTHIRE — server-side helpers. Never reaches the browser.
- *
- * No npm dependencies and no build step: Stripe is called over its REST API
- * with fetch, Supabase over PostgREST with the service role key, and the
- * webhook signature is verified with node:crypto. Files in /api beginning with
- * an underscore are not routed by Vercel.
- */
+/* outbid.lol — serverless helpers.
+ * No npm dependencies: Stripe over its REST API, Supabase over PostgREST,
+ * webhook HMAC via node:crypto. Keeps the "no build step" promise honest. */
+
 import crypto from 'node:crypto';
 
-/* ------------------------------ env ---------------------------------- */
+export const CONNECT_ACCOUNT = process.env.STRIPE_CONNECT_ACCOUNT_ID || 'acct_1SNgH8ItrE8tEH6a';
+export const MIN_CENTS = 500;
+export const HEADLINE_MAX = 120;
 
-export function env(name, fallback) {
-  var v = process.env[name];
-  if (v == null || v === '') {
-    if (fallback !== undefined) return fallback;
-    throw new Error('Missing environment variable: ' + name);
-  }
+export const CATEGORIES = [
+  'SEO', 'Agents', 'AI Media', 'Marketing', 'Developer', 'Productivity',
+  'People', 'Design', 'Engineering', 'Data', 'Sales', 'Content',
+  'Product', 'Growth', 'Ops', 'Founding', 'Internship', 'Other'
+];
+
+/* Only links from real hiring platforms may spawn a board. This is the copy
+   that counts — the client-side list is only there for a faster answer. */
+export const JOB_HOSTS = [
+  'linkedin.com', 'wellfound.com', 'angel.co', 'workatastartup.com',
+  'lever.co', 'greenhouse.io', 'ashbyhq.com', 'workable.com', 'breezy.hr',
+  'indeed.com', 'glassdoor.com', 'naukri.com', 'instahyre.com', 'cutshort.io'
+];
+
+export function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers }
+  });
+}
+export const bad = (msg, status = 400) => json({ error: msg }, status);
+
+export async function readJson(request) {
+  try { return await request.json(); } catch { return {}; }
+}
+
+export function env(name, required = true) {
+  const v = process.env[name];
+  if (!v && required) throw new Error(`Missing environment variable ${name}.`);
   return v;
 }
 
-export const CONNECT_ACCOUNT = () => env('STRIPE_CONNECT_ACCOUNT_ID', 'acct_1SNgH8ItrE8tEH6a');
+/* ---------------------------------------------------------------- values -- */
 
-export function siteUrl(request) {
-  var explicit = process.env.SITE_URL;
-  if (explicit) return explicit.replace(/\/$/, '');
-  try {
-    var u = new URL(request.url);
-    var host = request.headers.get('x-forwarded-host') || u.host;
-    var proto = request.headers.get('x-forwarded-proto') || u.protocol.replace(':', '');
-    return proto + '://' + host;
-  } catch (e) {
-    return 'http://localhost:3000';
+export function safeUrl(raw) {
+  if (!raw) return null;
+  let s = String(raw).trim();
+  if (!/^https?:\/\//i.test(s)) {
+    if (/^[\w.-]+\.[a-z]{2,}(\/|$)/i.test(s)) s = 'https://' + s; else return null;
   }
-}
-
-/* ---------------------------- responses ------------------------------- */
-
-export function json(data, status) {
-  return new Response(JSON.stringify(data), {
-    status: status || 200,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
-  });
-}
-
-export function bad(message, status) {
-  return json({ error: message }, status || 400);
-}
-
-export async function readJson(request) {
   try {
-    var text = await request.text();
-    return text ? JSON.parse(text) : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-export function methodGuard(request, allowed) {
-  if (request.method !== allowed) {
-    return json({ error: 'Method not allowed.' }, 405);
-  }
-  return null;
-}
-
-/* ------------------------------ strings ------------------------------- */
-
-export function str(v, max) {
-  if (v == null) return '';
-  var s = String(v).trim();
-  return max ? s.slice(0, max) : s;
-}
-
-export function isEmail(v) {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || ''));
-}
-
-export function httpUrl(v) {
-  if (!v) return null;
-  var s = String(v).trim();
-  if (!s) return null;
-  try {
-    var u = new URL(s);
+    const u = new URL(s);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
     return u.href;
-  } catch (e) { return null; }
+  } catch { return null; }
 }
 
-export function token(bytes) {
-  return crypto.randomBytes(bytes || 24).toString('base64url');
+export function hostOf(url) {
+  try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; }
 }
 
-export function slugify(name) {
-  var base = String(name || 'entry').toLowerCase()
-    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  if (!base) base = 'entry';
-  return base + '-' + crypto.randomBytes(3).toString('hex');
+export function jobHostAllowed(url) {
+  const h = hostOf(url);
+  return !!h && JOB_HOSTS.some((allowed) => h === allowed || h.endsWith('.' + allowed));
 }
 
-/* ---------------------------- supabase -------------------------------- */
-
-function sbHeaders(extra) {
-  var key = env('SUPABASE_SERVICE_ROLE_KEY');
-  return Object.assign({
-    apikey: key,
-    Authorization: 'Bearer ' + key,
-    'Content-Type': 'application/json'
-  }, extra || {});
+/* Two links to the same posting should join one board, not spawn two. Strip
+   tracking params, the trailing slash, and LinkedIn's query-only job form. */
+export function normaliseJobUrl(raw) {
+  const s = safeUrl(raw);
+  if (!s) return null;
+  const u = new URL(s);
+  u.hash = '';
+  u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
+  const keep = new URLSearchParams();
+  const jobId = u.searchParams.get('currentJobId') || u.searchParams.get('jk') || u.searchParams.get('gh_jid');
+  if (jobId) keep.set('id', jobId);
+  u.search = keep.toString();
+  u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+  return u.toString();
 }
 
-/** Raw PostgREST call with the service role key. Bypasses RLS by design. */
-export async function db(path, init) {
-  var base = env('SUPABASE_URL').replace(/\/$/, '');
-  var res = await fetch(base + '/rest/v1/' + path, {
-    method: (init && init.method) || 'GET',
-    headers: sbHeaders(init && init.headers),
-    body: init && init.body ? JSON.stringify(init.body) : undefined
-  });
-  var text = await res.text();
-  var data = null;
-  if (text) { try { data = JSON.parse(text); } catch (e) { data = text; } }
+export function slugify(s, fallback = 'board') {
+  const out = String(s || '').toLowerCase().normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+  return out || fallback;
+}
+
+export function randomToken(bytes = 24) {
+  return crypto.randomBytes(bytes).toString('base64url');
+}
+
+export function isEmail(s) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(s || '').trim()); }
+export function emailDomain(s) { return String(s || '').split('@')[1]?.toLowerCase().trim() || ''; }
+
+export const FREE_INBOXES = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+  'yahoo.com', 'ymail.com', 'proton.me', 'protonmail.com', 'pm.me',
+  'icloud.com', 'me.com', 'mac.com', 'aol.com', 'gmx.com', 'zoho.com',
+  'mail.com', 'yandex.com', 'tutanota.com', 'fastmail.com',
+  'mailinator.com', 'guerrillamail.com', '10minutemail.com', 'tempmail.com',
+  'temp-mail.org', 'throwawaymail.com', 'sharklasers.com', 'yopmail.com',
+  'trashmail.com', 'getnada.com', 'dispostable.com', 'maildrop.cc'
+]);
+
+export function siteUrl(request) {
+  if (process.env.SITE_URL) return process.env.SITE_URL.replace(/\/$/, '');
+  const proto = request.headers.get('x-forwarded-proto') || 'https';
+  const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
+  return `${proto}://${host}`;
+}
+
+/* ------------------------------------------------------------- supabase -- */
+/* Service role only. This module is never shipped to the browser. */
+
+function sbHeaders(extra = {}) {
+  const key = env('SUPABASE_SERVICE_ROLE_KEY');
+  return { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...extra };
+}
+
+export async function sbFetch(path, init = {}) {
+  const base = env('SUPABASE_URL').replace(/\/$/, '');
+  const res = await fetch(`${base}${path}`, { ...init, headers: sbHeaders(init.headers) });
+  const text = await res.text();
+  let body = null;
+  if (text) { try { body = JSON.parse(text); } catch { body = text; } }
   if (!res.ok) {
-    var msg = (data && (data.message || data.error || data.hint)) || ('Database error ' + res.status);
-    var err = new Error(msg);
+    const msg = (body && body.message) || (typeof body === 'string' ? body : 'Database request failed.');
+    const err = new Error(msg);
     err.status = res.status;
-    err.body = data;
+    err.body = body;
     throw err;
   }
-  return data;
+  return body;
 }
 
-export async function selectOne(path) {
-  var rows = await db(path);
-  return Array.isArray(rows) && rows.length ? rows[0] : null;
-}
+const q = (v) => encodeURIComponent(v);
 
-export async function insertRow(table, row, prefer) {
-  var rows = await db(table, {
-    method: 'POST',
-    body: row,
-    headers: { Prefer: prefer || 'return=representation' }
+export const db = {
+  select: (table, query = '') => sbFetch(`/rest/v1/${table}?${query}`),
+  async one(table, query) {
+    const rows = await sbFetch(`/rest/v1/${table}?${query}&limit=1`);
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  },
+  insert: (table, row, prefer = 'return=representation') =>
+    sbFetch(`/rest/v1/${table}`, {
+      method: 'POST', headers: { Prefer: prefer }, body: JSON.stringify(row)
+    }),
+  update: (table, query, patch) =>
+    sbFetch(`/rest/v1/${table}?${query}`, {
+      method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch)
+    }),
+  upsert: (table, row, onConflict) =>
+    sbFetch(`/rest/v1/${table}?on_conflict=${q(onConflict)}`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify(row)
+    }),
+  eq: (col, val) => `${col}=eq.${q(val)}`
+};
+
+/* Verify a Supabase Auth JWT by asking Supabase who it belongs to. Cheaper to
+   reason about than verifying the signature ourselves, and it honours
+   revocation. */
+export async function userFromToken(accessToken) {
+  if (!accessToken) return null;
+  const base = env('SUPABASE_URL').replace(/\/$/, '');
+  const res = await fetch(`${base}/auth/v1/user`, {
+    headers: { apikey: env('SUPABASE_SERVICE_ROLE_KEY'), Authorization: `Bearer ${accessToken}` }
   });
-  return Array.isArray(rows) ? rows[0] || null : rows;
+  if (!res.ok) return null;
+  const u = await res.json();
+  return u && u.email ? u : null;
 }
 
-export async function updateRow(table, filter, patch) {
-  var rows = await db(table + '?' + filter, {
-    method: 'PATCH',
-    body: patch,
-    headers: { Prefer: 'return=representation' }
-  });
-  return Array.isArray(rows) ? rows[0] || null : rows;
-}
+/* --------------------------------------------------------------- stripe -- */
 
-export async function categoryIdBySlug(slug) {
-  if (!slug) return null;
-  var row = await selectOne('categories?slug=eq.' + encodeURIComponent(slug) + '&select=id&limit=1');
-  return row ? row.id : null;
-}
-
-/* ------------------------------ stripe -------------------------------- */
-
-/** Flattens the nested object Stripe's form encoding expects. */
-export function formEncode(obj, prefix, out) {
-  out = out || new URLSearchParams();
-  Object.keys(obj).forEach(function (k) {
-    var v = obj[k];
-    if (v === undefined || v === null || v === '') return;
-    var key = prefix ? prefix + '[' + k + ']' : k;
-    if (typeof v === 'object' && !Array.isArray(v)) formEncode(v, key, out);
-    else if (Array.isArray(v)) v.forEach(function (item, i) {
-      if (typeof item === 'object') formEncode(item, key + '[' + i + ']', out);
-      else out.append(key + '[' + i + ']', String(item));
+function form(obj, prefix = '', out = new URLSearchParams()) {
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined || v === null) continue;
+    const key = prefix ? `${prefix}[${k}]` : k;
+    if (typeof v === 'object' && !Array.isArray(v)) form(v, key, out);
+    else if (Array.isArray(v)) v.forEach((item, i) => {
+      if (typeof item === 'object') form(item, `${key}[${i}]`, out);
+      else out.append(`${key}[${i}]`, String(item));
     });
     else out.append(key, String(v));
-  });
+  }
   return out;
 }
 
-export async function stripe(path, body, idempotencyKey) {
-  var headers = {
-    Authorization: 'Bearer ' + env('STRIPE_SECRET_KEY'),
-    'Content-Type': 'application/x-www-form-urlencoded'
-  };
-  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
-
-  var res = await fetch('https://api.stripe.com/v1/' + path, {
-    method: body ? 'POST' : 'GET',
-    headers: headers,
-    body: body ? formEncode(body).toString() : undefined
+export async function stripe(path, payload, method = 'POST') {
+  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${env('STRIPE_SECRET_KEY')}`,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: payload ? form(payload).toString() : undefined
   });
-  var data = await res.json();
-  if (!res.ok) {
-    var err = new Error((data && data.error && data.error.message) || 'Stripe rejected the request.');
-    err.status = res.status;
-    throw err;
-  }
-  return data;
+  const body = await res.json();
+  if (!res.ok) throw new Error(body?.error?.message || 'Stripe request failed.');
+  return body;
 }
 
-/** Stripe's own scheme: t=<ts>,v1=<hex>, signed over `${t}.${rawBody}`. */
-export function verifyStripeSignature(rawBody, header, secret, toleranceSeconds) {
+/* Constant-time verification of the Stripe signature over the raw body. */
+export function verifyStripeSignature(rawBody, header, secret, toleranceSec = 300) {
   if (!header) return false;
-  var parts = String(header).split(',').reduce(function (acc, kv) {
-    var i = kv.indexOf('=');
-    if (i > 0) {
-      var k = kv.slice(0, i).trim();
-      var v = kv.slice(i + 1).trim();
-      if (k === 'v1') (acc.v1 = acc.v1 || []).push(v);
-      else acc[k] = v;
-    }
-    return acc;
-  }, {});
+  const parts = Object.fromEntries(
+    header.split(',').map((p) => p.split('=')).filter((p) => p.length === 2)
+  );
+  const t = parts.t;
+  const v1 = parts.v1;
+  if (!t || !v1) return false;
+  if (Math.abs(Math.floor(Date.now() / 1000) - Number(t)) > toleranceSec) return false;
 
-  if (!parts.t || !parts.v1 || !parts.v1.length) return false;
-
-  var age = Math.abs(Math.floor(Date.now() / 1000) - parseInt(parts.t, 10));
-  if (age > (toleranceSeconds || 300)) return false;
-
-  var expected = crypto.createHmac('sha256', secret)
-    .update(parts.t + '.' + rawBody, 'utf8').digest('hex');
-  var expectedBuf = Buffer.from(expected, 'utf8');
-
-  return parts.v1.some(function (candidate) {
-    var buf = Buffer.from(candidate, 'utf8');
-    return buf.length === expectedBuf.length && crypto.timingSafeEqual(buf, expectedBuf);
-  });
+  const expected = crypto.createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(v1, 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/* ------------------------------- admin -------------------------------- */
+/* ------------------------------------------------------------- admin tk -- */
 
-export function timingSafeString(a, b) {
-  var ab = Buffer.from(String(a), 'utf8');
-  var bb = Buffer.from(String(b), 'utf8');
-  if (ab.length !== bb.length) {
-    // Still burn a comparison so the failure is not measurably faster.
-    crypto.timingSafeEqual(ab, ab);
-    return false;
-  }
-  return crypto.timingSafeEqual(ab, bb);
+export function mintAdminToken(ttlSec = 60 * 60 * 8) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const sig = crypto.createHmac('sha256', env('ADMIN_PASSWORD')).update(String(exp)).digest('base64url');
+  return `${exp}.${sig}`;
 }
 
-/** Short-lived bearer token so the password is sent once, not on every action. */
-export function mintAdminToken(ttlSeconds) {
-  var secret = env('ADMIN_PASSWORD');
-  var exp = Math.floor(Date.now() / 1000) + (ttlSeconds || 60 * 60 * 8);
-  var payload = String(exp);
-  var sig = crypto.createHmac('sha256', secret).update('outhire-admin.' + payload).digest('base64url');
-  return payload + '.' + sig;
+export function checkAdminToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const [expStr, sig] = token.split('.');
+  if (!expStr || !sig) return false;
+  if (Number(expStr) < Math.floor(Date.now() / 1000)) return false;
+  const expected = crypto.createHmac('sha256', env('ADMIN_PASSWORD')).update(expStr).digest('base64url');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(sig);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-export function verifyAdminToken(value) {
-  if (!value || typeof value !== 'string') return false;
-  var i = value.indexOf('.');
-  if (i < 1) return false;
-  var payload = value.slice(0, i);
-  var sig = value.slice(i + 1);
-  var exp = parseInt(payload, 10);
-  if (!exp || exp < Math.floor(Date.now() / 1000)) return false;
-  var secret = env('ADMIN_PASSWORD');
-  var expected = crypto.createHmac('sha256', secret).update('outhire-admin.' + payload).digest('base64url');
-  return timingSafeString(sig, expected);
+export function constantTimeEqual(a, b) {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  if (x.length !== y.length) return false;
+  return crypto.timingSafeEqual(x, y);
 }
 
-/* -------------------------------- mail -------------------------------- */
+/* ----------------------------------------------------------------- mail -- */
+/* Optional: with RESEND_API_KEY set, mail actually sends. Without it the
+   message is logged rather than silently dropped, so an upload link is never
+   lost without a trace. */
 
-/**
- * Sends the upload link. Resend if RESEND_API_KEY is set, otherwise the link
- * is logged so a fresh deploy still works end to end and nothing is silently
- * lost. Returns true only if a provider actually accepted it.
- */
-export async function sendUploadEmail(to, entry, uploadUrl) {
-  var key = process.env.RESEND_API_KEY;
-  var from = process.env.MAIL_FROM || 'Outhire <onboarding@resend.dev>';
-
-  var subject = 'Your Outhire upload link';
-  var text =
-    'Your bid went through. You are on the board at ' + (entry.display_name || 'your entry') + '.\n\n' +
-    'Upload your video here:\n' + uploadUrl + '\n\n' +
-    'Forty-five seconds or under, at least twenty, portrait, under 50MB.\n' +
-    'The entry goes live once it clears review.\n';
-
+export async function sendMail({ to, subject, text }) {
+  const key = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM || 'outbid.lol <onboarding@resend.dev>';
   if (!key) {
-    console.log('[outhire] no RESEND_API_KEY set; upload link for ' + to + ': ' + uploadUrl);
-    return false;
+    console.log('[mail:unsent — no RESEND_API_KEY]', JSON.stringify({ to, subject, text }));
+    return { sent: false };
   }
-
   try {
-    var res = await fetch('https://api.resend.com/emails', {
+    const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: from, to: [to], subject: subject, text: text })
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, subject, text })
     });
-    if (!res.ok) {
-      console.error('[outhire] email send failed', res.status, await res.text());
-      console.log('[outhire] upload link for ' + to + ': ' + uploadUrl);
-      return false;
-    }
-    return true;
+    if (!res.ok) throw new Error(await res.text());
+    return { sent: true };
   } catch (e) {
-    console.error('[outhire] email send threw', e);
-    console.log('[outhire] upload link for ' + to + ': ' + uploadUrl);
-    return false;
+    console.error('[mail:failed]', e.message, JSON.stringify({ to, subject, text }));
+    return { sent: false };
   }
 }

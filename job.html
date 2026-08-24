@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job boards — outbid.lol</title>
+<meta name="theme-color" content="#FDFCFA">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="job">
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
+    </div>
+    <nav class="mainnav" aria-label="Primary">
+      <a href="/">Leaderboard</a>
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
+
+  <main class="page wrap-narrow" style="padding-left:0;padding-right:0">
+    <h1>Spawn a board from a job link</h1>
+    <p class="lede">Paste a listing from a real hiring platform. The first person to paste it creates the board; everyone after joins it. Flat $5 to appear, no bidding.</p>
+
+    <div class="card" style="margin-top:24px">
+      <div class="field" style="margin-top:0">
+        <label for="joburl">Job listing URL</label>
+        <input id="joburl" type="url" inputmode="url" placeholder="https://www.linkedin.com/jobs/view/...">
+        <p class="hint" id="hosts"></p>
+      </div>
+      <div style="margin-top:16px">
+        <button class="btn btn-primary" type="button" id="parse">Read this listing</button>
+      </div>
+    </div>
+
+    <div id="job-error" class="notice notice-bad hide"></div>
+
+    <!-- Fetch failures are the norm on LinkedIn, so the manual path is a
+         first-class form rather than an afterthought. -->
+    <form class="card hide" id="confirm" style="margin-top:16px">
+      <h2 id="confirm-title">Confirm the role</h2>
+      <p class="hint" id="confirm-note" style="margin-top:6px"></p>
+      <div class="field hide" id="paste-field">
+        <label for="paste">Paste the job description</label>
+        <textarea id="paste" rows="7" placeholder="Copy the listing text and paste it here."></textarea>
+        <div style="margin-top:10px"><button class="btn btn-sm" type="button" id="reparse">Read the pasted text</button></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="company">Company <span class="req">*</span></label><input id="company" type="text" required></div>
+        <div class="field"><label for="role">Role title <span class="req">*</span></label><input id="role" type="text" required></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="location">Location</label><input id="location" type="text"></div>
+        <div class="field"><label for="seniority">Seniority</label><input id="seniority" type="text"></div>
+      </div>
+      <div style="margin-top:18px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary" type="submit" id="create">Create the board</button>
+        <span class="muted" style="font-size:14px">Check this before it goes live — the parse is never trusted silently.</span>
+      </div>
+    </form>
+  </main>
+  <footer class="foot"><a href="/">Back to the leaderboard</a></footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/config.js"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/job.js"></script>

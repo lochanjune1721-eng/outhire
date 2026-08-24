@@ -2,124 +2,108 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Enter — Outhire</title>
-<meta name="description" content="File an entry, set your bid, then film 45 seconds on why you should be hired.">
-<meta name="theme-color" content="#EDEAE3">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Take a spot — outbid.lol</title>
+<meta name="theme-color" content="#FDFCFA">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body data-page="submit">
-
-<a class="skip" href="#form">Skip to the form</a>
-
-<header class="masthead">
-  <div class="wrap">
-    <div class="masthead-inner">
-      <div><a class="wordmark display" href="/">Outhire</a></div>
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
     </div>
-  </div>
-  <nav class="nav" aria-label="Primary">
-    <div class="wrap" style="display:flex;flex-wrap:wrap">
+    <nav class="mainnav" aria-label="Primary">
       <a href="/">Leaderboard</a>
-      <a href="/submit.html" aria-current="page">Enter</a>
-      <a href="/recruiters.html">Recruiters</a>
-    </div>
-  </nav>
-</header>
-
-<main class="wrap-narrow page">
-  <h1 class="display">Take a rank</h1>
-  <p class="lede">Two steps. Set your bid and pay, then film forty-five seconds on why you should be hired. The bid puts you on the board; the video is what recruiters actually watch.</p>
-
-  <div id="claim-context" hidden></div>
-
-  <form class="form" id="form" novalidate>
-    <div class="grid-2">
-      <div class="field">
-        <label for="display_name">Name</label>
-        <input id="display_name" name="display_name" type="text" autocomplete="name" maxlength="80" required>
-      </div>
-      <div class="field">
-        <label for="email">Email</label>
-        <input id="email" name="email" type="email" autocomplete="email" maxlength="200" required>
-        <p class="hint">The upload link goes here after payment. It is never shown on the board.</p>
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="headline">Headline</label>
-      <input id="headline" name="headline" type="text" maxlength="140" required
-             placeholder="One line. What you did, not what you are.">
-      <p class="hint count"><span id="headline-count">0</span>/140</p>
-    </div>
-
-    <div class="grid-2">
-      <div class="field">
-        <label for="portfolio_url">Portfolio URL</label>
-        <input id="portfolio_url" name="portfolio_url" type="url" inputmode="url" placeholder="https://">
-      </div>
-      <div class="field">
-        <label for="linkedin_url">LinkedIn</label>
-        <input id="linkedin_url" name="linkedin_url" type="url" inputmode="url" placeholder="https://www.linkedin.com/in/">
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="category_slug">Role</label>
-      <span class="select-wrap">
-        <select id="category_slug" name="category_slug" required>
-          <option value="">Pick one</option>
-        </select>
-      </span>
-      <p class="hint">Fixed list. Near-duplicate roles fragment the board, so there is no free text.</p>
-    </div>
-
-    <div class="field">
-      <label for="bid">Bid</label>
-      <div class="money-input">
-        <span class="prefix">$</span>
-        <input id="bid" name="bid" type="number" min="5" step="1" value="5" inputmode="numeric" required>
-      </div>
-      <p class="hint" id="bid-hint">Minimum <span class="num">$5</span>. Highest standing bid holds rank one.</p>
-    </div>
-
-    <div class="field">
-      <label for="job_url">Job URL <span class="muted">— optional</span></label>
-      <input id="job_url" name="job_url" type="url" inputmode="url" placeholder="https://">
-      <p class="hint">Paste the posting you are going for and your entry joins that role's board as well as the main feed.</p>
-    </div>
-
-    <div id="form-error" class="notice" hidden></div>
-
-    <div class="form-actions">
-      <button class="btn-claim" type="submit" id="submit-btn" style="width:auto;min-width:260px">
-        Pay <span class="num" id="submit-amount">$5</span> and take a rank
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
       </button>
-      <span class="hint muted">Stripe handles the card. You get an upload link straight after.</span>
-    </div>
-  </form>
+    </nav>
+  </header>
+  <main class="page wrap-narrow" style="padding-left:0;padding-right:0">
+    <h1 id="page-title">Take a spot</h1>
+    <p class="lede" id="page-lede">Fill this in, pay, then upload your photo. Minimum bid is $5.</p>
 
-  <ul class="checklist">
-    <li><span>Video is 45 seconds or under</span><span class="state num">45s</span></li>
-    <li><span>Video is at least 20 seconds</span><span class="state num">20s</span></li>
-    <li><span>Portrait, 9:16, never cropped</span><span class="state num">9:16</span></li>
-    <li><span>Under 50MB</span><span class="state num">50MB</span></li>
-  </ul>
-</main>
+    <div id="context" class="notice hide"></div>
 
-<footer class="foot">
-  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
-    <p class="muted">Every bid is a payment, and every payment is on the public ledger.</p>
+    <form id="form">
+      <div class="card">
+        <h2>You</h2>
+        <div class="grid2">
+          <div class="field">
+            <label for="display_name" id="lbl-name">Your name <span class="req">*</span></label>
+            <input id="display_name" type="text" maxlength="80" autocomplete="name" required>
+          </div>
+          <div class="field">
+            <label for="email" id="lbl-email">Email <span class="req">*</span></label>
+            <input id="email" type="email" maxlength="200" autocomplete="email" required>
+            <p class="hint" id="hint-email">Never shown on the board. Your upload link goes here.</p>
+          </div>
+        </div>
+        <div class="field">
+          <label for="url" id="lbl-url">Portfolio URL <span class="req">*</span></label>
+          <input id="url" type="url" inputmode="url" placeholder="https://" required>
+        </div>
+        <div class="field">
+          <label for="headline" id="lbl-headline">One-liner <span class="req">*</span></label>
+          <textarea id="headline" maxlength="120" required placeholder="Why you should be hired. One line."></textarea>
+          <p class="hint"><span class="num" id="headline-count">0</span>/120</p>
+        </div>
+        <div class="field">
+          <label for="category">Category <span class="req">*</span></label>
+          <span class="select-wrap">
+            <select id="category" required><option value="">Choose a category</option></select>
+          </span>
+        </div>
+        <div class="field hide" id="job-field">
+          <label for="job_url">Job listing URL</label>
+          <input id="job_url" type="url" inputmode="url" placeholder="https://">
+          <p class="hint">Optional. Links your listing to the role board for it.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Your bid</h2>
+        <p class="hint" style="margin-top:6px">Highest standing bid holds #1. Anything lower still lands you on the board.</p>
+        <div class="field">
+          <label for="bid">Bid <span class="req">*</span></label>
+          <div class="money">
+            <span class="pre">$</span>
+            <input id="bid" type="number" min="5" step="1" value="5" inputmode="numeric" required>
+          </div>
+          <p class="hint" id="bid-hint">Minimum <span class="num">$5</span>.</p>
+        </div>
+      </div>
+
+      <div id="form-error" class="notice notice-bad hide"></div>
+
+      <div style="margin-top:22px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-primary btn-lg" type="submit" id="pay-btn">
+          Pay <span class="num" id="pay-amount">$5</span> and take a spot
+        </button>
+        <span class="muted" style="font-size:14px">Stripe handles the card. Photo upload comes next.</span>
+      </div>
+    </form>
+  </main>
+
+  <footer class="foot">
+    <p class="muted">Media is required — a photo or a video link — before your spot goes live.</p>
     <a href="/">Back to the leaderboard</a>
-  </div>
-</footer>
-
+  </footer>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/config.js"></script>
 <script src="/js/supabase.js"></script>
 <script src="/js/submit.js"></script>
-</body>
-</html>

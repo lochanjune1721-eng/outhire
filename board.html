@@ -2,117 +2,46 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Board — Outhire</title>
-<meta name="theme-color" content="#EDEAE3">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Role board — outbid.lol</title>
+<meta name="theme-color" content="#FDFCFA">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body data-page="board">
-
-<a class="skip" href="#ledger">Skip to the leaderboard</a>
-
-<header class="masthead">
-  <div class="wrap">
-    <div class="masthead-inner">
-      <div>
-        <a class="wordmark display" href="/">Outhire</a>
-        <p class="masthead-sub" id="board-sub">Loading this board.</p>
-      </div>
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-val num" id="stat-entries">—</div>
-          <div class="stat-key">Entries on this board</div>
-        </div>
-        <div class="stat">
-          <div class="stat-val num" id="stat-top">—</div>
-          <div class="stat-key">Top bid</div>
-        </div>
-        <div class="stat">
-          <div class="stat-val num" id="stat-opened">—</div>
-          <div class="stat-key">Board opened</div>
-        </div>
-      </div>
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
     </div>
-  </div>
-  <nav class="nav" aria-label="Primary">
-    <div class="wrap" style="display:flex;flex-wrap:wrap">
-      <a href="/">All roles</a>
-      <a href="#" id="nav-enter">Enter this board</a>
-      <a href="#" id="nav-job" hidden>The job post</a>
-      <a href="/recruiters.html">Make your own</a>
-    </div>
-  </nav>
-</header>
+    <nav class="mainnav" aria-label="Primary">
+      <a href="/">Leaderboard</a>
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
 
-<main>
-  <div class="stage">
-    <div class="feed" id="feed" tabindex="-1" aria-label="Entries on this board">
-      <div class="feed-empty"><p class="label">Loading</p></div>
-    </div>
-    <aside class="rail" aria-label="Board standing">
-      <div class="rail-head">
-        <span class="section-title">Standing</span>
-        <span class="label num" id="rail-count">—</span>
-      </div>
-      <div id="rail-rows"></div>
-    </aside>
-  </div>
-
-  <section class="section" id="ledger">
-    <div class="wrap">
-      <div class="section-head">
-        <h2 class="section-title">Candidates</h2>
-        <div class="tabs" role="group" aria-label="Sort">
-          <button class="chip" type="button" data-sort="bid" aria-pressed="true">By bid</button>
-          <button class="chip" type="button" data-sort="new" aria-pressed="false">Newest</button>
-        </div>
-      </div>
-
-      <div class="table-scroll">
-        <table class="ledger">
-          <caption class="sr-only">Entries on this board</caption>
-          <thead>
-            <tr>
-              <th class="c-rank" scope="col">Rank</th>
-              <th class="c-name" scope="col">Name</th>
-              <th class="c-role" scope="col">Role</th>
-              <th class="c-bid" scope="col">Bid</th>
-              <th class="c-click" scope="col">Clicks</th>
-              <th class="c-when" scope="col">Last bid</th>
-              <th class="c-act" scope="col"><span class="sr-only">Claim</span></th>
-            </tr>
-          </thead>
-          <tbody id="ledger-rows">
-            <tr><td colspan="7" class="muted">Loading.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="pager">
-        <span class="label num" id="pager-range">—</span>
-        <div class="btn-row">
-          <button class="btn btn-ghost" type="button" id="prev-page" disabled>Previous</button>
-          <button class="btn btn-ghost" type="button" id="next-page" disabled>Next</button>
-        </div>
-      </div>
-    </div>
-  </section>
-</main>
-
-<footer class="foot">
-  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
-    <p class="muted">Every candidate here paid to be here and filmed themselves saying why.</p>
-    <a href="/recruiters.html">Make a board for your own role</a>
-  </div>
-</footer>
-
+  <main class="page" id="board-page">
+    <div id="board-head"><p class="empty">Loading the board.</p></div>
+    <div class="board" id="board-rows"></div>
+    <div class="pager" id="pager"></div>
+  </main>
+  <footer class="foot"><a href="/">Back to the leaderboard</a><a href="/job.html">Spawn another board</a></footer>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/config.js"></script>
 <script src="/js/supabase.js"></script>
-<script src="/js/feed.js"></script>
 <script src="/js/board.js"></script>
-</body>
-</html>
+<script src="/js/roleboard.js"></script>

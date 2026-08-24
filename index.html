@@ -2,144 +2,130 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Outhire — the public record of people bidding on themselves</title>
-<meta name="description" content="Candidates film 45 seconds on why they should be hired, then bid to hold the top of a public leaderboard. Recruiters browse by role.">
-<meta name="theme-color" content="#EDEAE3">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>outbid.lol — pay to rank, in both directions</title>
+<meta name="description" content="Candidates pay to appear with their portfolio and pitch. Recruiters pay to appear with their open role. Same board, both directions.">
+<meta name="theme-color" content="#FDFCFA">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/style.css">
 </head>
-<body data-page="index">
+<body data-page="home">
 
-<a class="skip" href="#ledger">Skip to the leaderboard</a>
+<a class="skip" href="#board">Skip to the leaderboard</a>
 
-<header class="masthead">
-  <div class="wrap">
-    <div class="masthead-inner">
-      <div>
-        <h1 class="wordmark display">Outhire</h1>
-        <p class="masthead-sub">Forty-five seconds on why you should be hired, and a bid to sit at the top of it. Paying and filming is the filter.</p>
-      </div>
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-val num" id="stat-visitors">—</div>
-          <div class="stat-key">Visitors since launch</div>
-        </div>
-        <div class="stat">
-          <div class="stat-val num" id="stat-entries">—</div>
-          <div class="stat-key">Entries live</div>
-        </div>
-        <div class="stat">
-          <div class="stat-val num" id="stat-top">—</div>
-          <div class="stat-key">Top bid</div>
-        </div>
+<div class="wrap">
+  <header class="topbar">
+    <div class="brand">
+      <a class="logo" href="/">
+        <svg class="logo-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 6h18M3 12h12M3 18h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        outbid.lol
+      </a>
+      <div class="pill-group" role="group" aria-label="Time range">
+        <button class="pill" type="button" data-scope="all" aria-pressed="true">All-time</button>
+        <button class="pill" type="button" data-scope="today" aria-pressed="false">Today</button>
       </div>
     </div>
-  </div>
-  <div class="ticker">
-    <div class="wrap">
-      <span class="live-dot" aria-hidden="true"></span><span id="revenue-line">This side project has made <span class="num">$0</span> since launch.</span>
-    </div>
-  </div>
-  <nav class="nav" aria-label="Primary">
-    <div class="wrap" style="display:flex;flex-wrap:wrap">
+    <nav class="mainnav" aria-label="Primary">
       <a href="/" aria-current="page">Leaderboard</a>
-      <a href="/submit.html">Enter</a>
-      <a href="/recruiters.html">Recruiters</a>
-      <a href="#activity">Activity</a>
-    </div>
-  </nav>
-</header>
+      <a href="#categories">Categories</a>
+      <a href="/job.html">Job boards</a>
+      <a href="/recruiter.html">Recruiters</a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle dark mode">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
 
-<main>
-  <div class="stage">
-    <div class="feed" id="feed" tabindex="-1" aria-label="Entry feed">
-      <div class="feed-empty" id="feed-loading">
-        <p class="label">Loading the ledger</p>
-      </div>
+  <div class="livebar">
+    <div class="livepill">
+      <span class="dot dot-pulse" aria-hidden="true"></span>
+      <b class="num" id="stat-online">—</b> online
+      <span class="sep" aria-hidden="true">·</span>
+      <b class="num" id="stat-visitors">—</b> visitors since launch
+      <span class="sep" aria-hidden="true">·</span>
+      <a href="#activity">see stats→</a>
     </div>
-    <aside class="rail" aria-label="Leaderboard">
-      <div class="rail-head">
-        <span class="section-title">Standing</span>
-        <span class="label num" id="rail-count">—</span>
-      </div>
-      <div id="rail-rows"></div>
-    </aside>
   </div>
 
-  <section class="section" id="activity">
-    <div class="wrap">
+  <div class="hero">
+    <h1>
+      <span>Claim #1 for</span>
+      <button class="stepper" type="button" id="bid-down" aria-label="Lower the bid by one dollar">−</button>
+      <span class="amount num" id="bid-amount">$5</span>
+      <button class="stepper" type="button" id="bid-up" aria-label="Raise the bid by one dollar">+</button>
+    </h1>
+    <p class="hero-sub">
+      <b>New spots start at $5.</b> Paying less than the #1 price still puts you on
+      the board at whatever place that bid can take.
+    </p>
+
+    <form class="entryform" id="entry-form">
+      <label class="inputpill">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+          <path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <span class="sr-only">Your URL</span>
+        <input type="text" id="entry-url" placeholder="Your portfolio URL" autocomplete="url" required>
+      </label>
+      <div class="selectpill">
+        <label class="sr-only" for="entry-category">Category</label>
+        <select id="entry-category" required>
+          <option value="">Choose a category</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-lg" type="submit" id="outbid-btn">Outbid</button>
+    </form>
+    <p class="hint-line">Already on the list? Enter the same URL and up your bid.</p>
+  </div>
+
+  <div class="chiprow" id="categories" role="group" aria-label="Filter by category"></div>
+
+  <div class="sidebar-toggle">
+    <div class="pill-group" role="group" aria-label="Which side of the board">
+      <button class="pill" type="button" data-side="candidate" aria-pressed="true">Looking for work</button>
+      <button class="pill" type="button" data-side="recruiter" aria-pressed="false">Hiring</button>
+    </div>
+  </div>
+
+  <main id="board">
+    <div class="board" id="board-rows">
+      <p class="empty">Loading the board.</p>
+    </div>
+    <div class="pager" id="pager"></div>
+
+    <section class="section" id="activity">
       <div class="section-head">
-        <h2 class="section-title"><span class="live-dot" aria-hidden="true"></span>Latest bids</h2>
-        <span class="label muted" id="activity-note">Last 10</span>
+        <h2 class="section-title">
+          <span class="dot dot-coral dot-pulse" aria-hidden="true"></span>Latest activity
+        </h2>
+        <span class="muted" style="font-size:14px" id="revenue-line"></span>
       </div>
       <ul class="activity" id="activity-list" aria-live="polite">
-        <li class="muted">No bids yet.</li>
+        <li>No bids yet.</li>
       </ul>
-    </div>
-  </section>
+    </section>
+  </main>
 
-  <section class="section" id="ledger">
-    <div class="wrap">
-      <div class="section-head">
-        <h2 class="section-title">The ledger</h2>
-        <div class="tabs" role="group" aria-label="Time range">
-          <button class="chip" type="button" data-scope="all" aria-pressed="true">All-time</button>
-          <button class="chip" type="button" data-scope="today" aria-pressed="false">Today</button>
-        </div>
-      </div>
-
-      <div class="filters" id="filters" role="group" aria-label="Filter by role"></div>
-
-      <div class="table-scroll">
-        <table class="ledger">
-          <caption class="sr-only">Live entries ranked by current bid</caption>
-          <thead>
-            <tr>
-              <th class="c-rank" scope="col">Rank</th>
-              <th class="c-name" scope="col">Name</th>
-              <th class="c-role" scope="col">Role</th>
-              <th class="c-bid" scope="col">Bid</th>
-              <th class="c-click" scope="col">Clicks</th>
-              <th class="c-when" scope="col">Last bid</th>
-              <th class="c-act" scope="col"><span class="sr-only">Claim</span></th>
-            </tr>
-          </thead>
-          <tbody id="ledger-rows">
-            <tr><td colspan="7" class="muted">Loading.</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="pager">
-        <span class="label num" id="pager-range">—</span>
-        <div class="btn-row">
-          <button class="btn btn-ghost" type="button" id="prev-page" disabled>Previous</button>
-          <button class="btn btn-ghost" type="button" id="next-page" disabled>Next</button>
-        </div>
-      </div>
-    </div>
-  </section>
-</main>
-
-<footer class="foot">
-  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
+  <footer class="foot">
     <div>
-      <p>Outhire. A public record of people staking money on themselves.</p>
-      <p class="muted">Minimum bid $5. Video is 45 seconds, no exceptions.</p>
+      <p>outbid.lol — pay to rank, in both directions.</p>
+      <p>Paste a job link to spawn a board for that specific role. <a href="/job.html">Try it</a>.</p>
     </div>
-    <div class="btn-row">
-      <a class="btn" href="/submit.html">Take a rank</a>
-      <a class="btn btn-ghost" href="/recruiters.html">Make a board</a>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn btn-sm" href="/job.html">Job boards</a>
+      <a class="btn btn-sm" href="/recruiter.html">Recruiter login</a>
     </div>
-  </div>
-</footer>
+  </footer>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/config.js"></script>
 <script src="/js/supabase.js"></script>
-<script src="/js/feed.js"></script>
-</body>
-</html>
+<script src="/js/board.js"></script>
