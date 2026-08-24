@@ -5,7 +5,7 @@
   var host = document.getElementById('person');
 
   async function boot() {
-    if (G.OFFLINE) { host.innerHTML = '<p class="empty">Supabase is not configured yet.</p>'; return; }
+    if (G.OFFLINE) { host.innerHTML = '<p class="empty">' + G.esc(G.offlineMessage()) + '</p>'; return; }
     var slug = G.qs('slug');
     var p = slug ? await G.person(slug) : null;
     if (!p) { host.innerHTML = '<p class="empty">Nobody at that address. <a href="/">See the boards</a>.</p>'; return; }
@@ -95,6 +95,7 @@
     }).join('');
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function start() { boot().catch(function (e) { G.showError('#person', e); }); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();

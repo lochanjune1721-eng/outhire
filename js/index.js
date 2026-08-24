@@ -163,10 +163,12 @@
 
   function boot() {
     if (G.OFFLINE) {
-      $('#groups').innerHTML = '<p class="empty">Supabase is not configured. Fill in <b>js/config.js</b>, run <b>sql/schema.sql</b>, then seed.</p>';
+      $('#groups').innerHTML = '<p class="empty">' + G.esc(G.offlineMessage()) + '</p>';
       return;
     }
-    loadBoards(); loadFeed(); loadStats();
+    loadBoards().catch(function (e) { G.showError('#groups', e); });
+    loadFeed().catch(function (e) { G.showError('#feed', e); });
+    loadStats().catch(function () { /* the counters are not worth a visible error */ });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();

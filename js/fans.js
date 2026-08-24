@@ -4,7 +4,7 @@
   var G = window.G;
   async function boot() {
     var host = document.getElementById('fans');
-    if (G.OFFLINE) { host.innerHTML = '<li class="muted">Supabase is not configured yet.</li>'; return; }
+    if (G.OFFLINE) { host.innerHTML = '<li class="muted">' + G.esc(G.offlineMessage()) + '</li>'; return; }
     var rows = await G.topFans(200);
     host.innerHTML = rows.length
       ? rows.map(function (u, i) {
@@ -14,6 +14,12 @@
         }).join('')
       : '<li class="muted">Nobody has backed anyone yet. The first dollar puts you at #1 here too.</li>';
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function start() {
+    boot().catch(function (e) {
+      var host = document.getElementById('fans');
+      host.innerHTML = '<li class="muted">' + G.esc(G.explain(e)) + '</li>';
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();

@@ -9,6 +9,6 @@
  * the service role key. If you rotate, update the value below at the same time.
  */
 window.GOAT_CONFIG = {
-  SUPABASE_URL: 'YOUR_SUPABASE_URL',
-  SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY'
+  SUPABASE_URL: 'https://lbxpatuwptkgmugpuezs.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxieHBhdHV3cHRrZ211Z3B1ZXpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1ODA4MjgsImV4cCI6MjEwMzE1NjgyOH0.YAcHtxFUd5jmDtLaOCHNcZ3HRn2siwPhrNyDIs5FgVs'
 };

@@ -11,11 +11,25 @@
     typeof cfg.SUPABASE_URL === 'string' && cfg.SUPABASE_URL.indexOf('http') === 0 &&
     typeof cfg.SUPABASE_ANON_KEY === 'string' && cfg.SUPABASE_ANON_KEY.length > 20;
 
+  var libLoaded = !!(window.supabase && window.supabase.createClient);
+
   var sb = null;
-  if (configured && window.supabase && window.supabase.createClient) {
+  if (configured && libLoaded) {
     sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   }
   var OFFLINE = !sb;
+
+  /* Two very different problems used to produce the same sentence, which sent
+     you to edit a config file that was already correct. */
+  function offlineMessage() {
+    if (!configured) {
+      return 'Supabase is not configured. Fill in js/config.js, run sql/schema.sql, then seed.';
+    }
+    if (!libLoaded) {
+      return 'The Supabase library did not load. Check the CDN script tag, and any network or content blocker.';
+    }
+    return 'Supabase is unavailable.';
+  }
 
   var TOPUPS = [500, 1000, 2500, 5000, 10000];
 
@@ -220,7 +234,7 @@
   }
 
   async function signIn(email) {
-    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    if (OFFLINE) throw new Error(offlineMessage());
     var r = await sb.auth.signInWithOtp({
       email: email,
       options: { emailRedirectTo: window.location.origin + '/wallet.html' }
@@ -233,7 +247,7 @@
   /* --------------------------- the four RPCs ------------------------------ */
 
   async function placeBid(personId, cents) {
-    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    if (OFFLINE) throw new Error(offlineMessage());
     var r = await sb.rpc('place_bid', { p_person: personId, p_amount: cents });
     if (r.error) throw new Error(cleanPgError(r.error.message));
     if (ME) { ME.balance_cents = r.data.balance_cents; emitMe(); }
@@ -241,7 +255,7 @@
   }
 
   async function addPerson(categorySlug, name, wikipediaUrl, blurb) {
-    if (OFFLINE) throw new Error('Supabase is not configured yet.');
+    if (OFFLINE) throw new Error(offlineMessage());
     var r = await sb.rpc('add_person', {
       p_category: categorySlug, p_name: name, p_wikipedia_url: wikipediaUrl, p_blurb: blurb || null
     });
@@ -274,6 +288,29 @@
     try { data = await res.json(); } catch (e) {}
     if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ').'));
     return data;
+  }
+
+  /* Turn a Supabase failure into the sentence that tells you what to do.
+     These are the three states a fresh deploy actually lands in. */
+  function explain(err) {
+    var msg = (err && (err.message || err.error_description || err.error)) || String(err || '');
+    if (/does not exist|42P01|schema cache|Could not find the table/i.test(msg)) {
+      return 'The database has no tables yet. Run sql/schema.sql in the Supabase SQL editor, then seed.';
+    }
+    if (/Failed to fetch|NetworkError|load failed|ERR_|fetch failed/i.test(msg)) {
+      return 'Could not reach Supabase. Check SUPABASE_URL in js/config.js and that the project is not paused.';
+    }
+    if (/JWT|api ?key|401|Unauthorized|invalid claim/i.test(msg)) {
+      return 'Supabase rejected the anon key. If you rotated your keys, put the new anon key in js/config.js.';
+    }
+    return msg || 'Something went wrong talking to the database.';
+  }
+
+  /* Render that diagnostic where the page would otherwise sit on "Loading". */
+  function showError(selector, err) {
+    var host = document.querySelector(selector);
+    if (host) host.innerHTML = '<p class="empty">' + esc(explain(err)) + '</p>';
+    console.error('[goat]', err);
   }
 
   /* --------------------------- header shell ------------------------------- */
@@ -368,6 +405,7 @@
     categories: categories, category: category, people: people, person: person,
     fansOf: fansOf, topFans: topFans, recentBids: recentBids, backedToday: backedToday,
     stats: stats, search: search, onBid: onBid, recordVisit: recordVisit,
+    explain: explain, showError: showError, offlineMessage: offlineMessage,
     onMe: onMe, refreshMe: refreshMe, signIn: signIn, signOut: signOut, get me() { return ME; },
     placeBid: placeBid, addPerson: addPerson, setProfile: setProfile, api: api
   };

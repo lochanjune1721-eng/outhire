@@ -45,7 +45,7 @@
   });
 
   async function boot() {
-    if (G.OFFLINE) { $('#cat-head').innerHTML = '<p class="empty">Supabase is not configured yet.</p>'; return; }
+    if (G.OFFLINE) { $('#cat-head').innerHTML = '<p class="empty">' + G.esc(G.offlineMessage()) + '</p>'; return; }
     var slug = G.qs('slug');
     var cat = slug ? await G.category(slug) : null;
     if (!cat) {
@@ -60,8 +60,9 @@
       '<p class="lede">Rank is the money. Taking #1 costs at least <b class="gold">$5</b> more than the leader; ' +
       'everywhere else a dollar more than the person above is enough.</p>';
     $('#add-panel').hidden = false;
-    draw();
+    draw().catch(function (e) { G.showError('#board', e); });
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-  else boot();
+  function start() { boot().catch(function (e) { G.showError('#cat-head', e); }); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
 })();
