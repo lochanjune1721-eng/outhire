@@ -1,9 +1,9 @@
 /* POST /api/checkout — start a top-up.
  * Creates the topups row as `pending` and returns Dodo's checkout link.
  * No balance moves here; only the webhook credits an account. */
-import { json, bad, readJson, db, env, userFromToken, siteUrl, createDodoCheckout, TOPUPS } from './_lib.js';
+import { webHandler, json, bad, readJson, db, env, userFromToken, siteUrl, createDodoCheckout, TOPUPS } from './_lib.js';
 
-export default async function handler(request) {
+export default webHandler(async function handler(request) {
   if (request.method !== 'POST') return bad('Use POST.', 405);
   try {
     const b = await readJson(request);
@@ -34,4 +34,4 @@ export default async function handler(request) {
     console.error('[checkout]', e);
     return bad(e.message || 'Checkout could not be created.', 500);
   }
-}
+});

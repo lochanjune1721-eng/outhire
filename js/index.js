@@ -15,11 +15,28 @@
   function tile(cat, top) {
     var one = top[0], two = top[1];
 
-    if (!one || !one.total_cents) {
+    // A board nobody has backed still has contenders, and their faces are the
+    // whole point of the page. Show them, and say the spot is open underneath —
+    // rather than rendering an empty box with no photo element at all.
+    if (!one) {
       return '<a class="tile" href="/category.html?slug=' + G.esc(cat.slug) + '">' +
         '<div class="tile-head"><span class="tile-name">' + G.esc(cat.name) + '</span>' +
         '<span class="tile-meta">open</span></div>' +
-        '<div class="tile-empty"><b>#1 is open</b>$1 takes it</div></a>';
+        '<div class="tile-empty"><b>Nobody here yet</b>$1 puts someone at #1</div></a>';
+    }
+
+    if (!one.total_cents) {
+      return '<a class="tile" href="/category.html?slug=' + G.esc(cat.slug) + '">' +
+        '<div class="tile-head">' +
+          '<span class="tile-name">' + G.esc(cat.name) + '</span>' +
+          '<span class="tile-meta">open</span>' +
+        '</div>' +
+        '<div class="tile-faces">' +
+          '<div class="one">' + G.photo(one, { caption: one.name }) + '</div>' +
+          (two ? '<div class="two">' + G.photo(two, { caption: two.name }) + '</div>' : '') +
+        '</div>' +
+        '<div class="tile-gap"><b>#1 is open</b> — $1 takes it</div>' +
+      '</a>';
     }
 
     var gap = Math.max(0, two ? one.total_cents - two.total_cents : one.total_cents);
@@ -50,10 +67,23 @@
 
     /* One query for every person, then group in memory. Sixty-five separate
        top-two queries would be sixty-five round trips. */
-    var res = await G.sb.from('people')
-      .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at')
-      .order('total_cents', { ascending: false })
-      .order('first_backed_at', { ascending: true, nullsFirst: false });
+    /* Supabase caps a response at 1000 rows by default and reports it as a
+       partial Content-Range, not an error — so 2926 people came back as 1000
+       with nothing to indicate the rest were missing. Page until exhausted. */
+    var people = [], page = 0, PAGE = 1000;
+    for (;;) {
+      var chunk = await G.sb.from('people')
+        .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at')
+        .order('total_cents', { ascending: false })
+        .order('first_backed_at', { ascending: true, nullsFirst: false })
+        .range(page * PAGE, page * PAGE + PAGE - 1);
+      if (chunk.error) throw chunk.error;
+      people = people.concat(chunk.data || []);
+      if (!chunk.data || chunk.data.length < PAGE) break;
+      page++;
+      if (page > 20) break;   // hard stop; nothing legitimate needs 20k rows
+    }
+    var res = { data: people };
 
     var byCat = {};
     (res.data || []).forEach(function (p) {

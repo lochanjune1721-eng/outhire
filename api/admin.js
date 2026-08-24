@@ -4,7 +4,7 @@ import {
   json, bad, readJson, db, env, constantTimeEqual, mintAdminToken, checkAdminToken
 } from './_lib.js';
 
-export default async function handler(request) {
+export default webHandler(async function handler(request) {
   if (request.method !== 'POST') return bad('Use POST.', 405);
   try {
     const b = await readJson(request);
@@ -71,4 +71,4 @@ export default async function handler(request) {
     console.error('[admin]', e);
     return bad(e.message || 'That did not work.', 500);
   }
-}
+});

@@ -2,11 +2,11 @@
  *
  * Idempotent twice over: dodo_payment_id is unique, and the topup row is only
  * credited when it is still `pending`, so a replayed webhook is a no-op. */
-import { json, bad, env, db, sbFetch, verifyDodoWebhook } from './_lib.js';
+import { webHandler, json, bad, env, db, sbFetch, verifyDodoWebhook } from './_lib.js';
 
 const SUCCESS = new Set(['payment.succeeded', 'payment.completed', 'payment.paid']);
 
-export default async function handler(request) {
+export default webHandler(async function handler(request) {
   if (request.method !== 'POST') return bad('Use POST.', 405);
 
   // Web-standard handler, so the raw body is available for the HMAC.
@@ -56,4 +56,4 @@ export default async function handler(request) {
     // 500 so Dodo retries rather than dropping a paid top-up.
     return bad('Webhook processing failed.', 500);
   }
-}
+});

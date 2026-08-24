@@ -12,7 +12,7 @@
  * The image is requested from Wikipedia at 800px, so there is nothing to
  * resize and no image library on the server.
  */
-import { json, bad, readJson, db, env, sbFetch } from './_lib.js';
+import { webHandler, json, bad, readJson, db, env, sbFetch } from './_lib.js';
 
 const UA = process.env.WIKI_UA || 'GOAT.lol/1.0 (https://goat.lol; caching lead images)';
 const REST = process.env.WIKI_REST || 'https://en.wikipedia.org/api/rest_v1';
@@ -121,7 +121,7 @@ async function diagnose() {
   return out;
 }
 
-export default async function handler(request) {
+export default webHandler(async function handler(request) {
   if (request.method === 'GET') return json(await diagnose());
   if (request.method !== 'POST') return bad('Use POST, or GET for a diagnosis.', 405);
 
@@ -178,4 +178,4 @@ export default async function handler(request) {
     console.error('[photo]', e);
     return json({ photo_path: null, why: 'lookup failed: ' + (e && e.message ? e.message : String(e)) });
   }
-}
+});

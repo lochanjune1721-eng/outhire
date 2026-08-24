@@ -58,6 +58,13 @@
         '</div>' +
       '</div>';
 
+    /* This page never resolved a picture — it rendered whatever photo_path
+       already existed and stopped. On a fresh site that is always null, so a
+       person page showed initials forever no matter how often it was opened. */
+    if (!p.photo_path && window.GBoard) {
+      window.GBoard.fillPictures(host, [p]);
+    }
+
     host.addEventListener('click', async function (e) {
       var step = e.target.closest('[data-step]');
       if (step) {

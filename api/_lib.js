@@ -5,6 +5,52 @@ import crypto from 'node:crypto';
 
 export const TOPUPS = [500, 1000, 2500, 5000, 10000];
 
+/* Vercel's Node runtime decides how to invoke a function by inspecting the
+   module's exports. A bare `export default async (request) => Response` can be
+   classified as a legacy (req, res) Node handler — in which case the Response
+   we return is discarded, nothing is ever written to res, and the request hangs
+   until the invocation times out. That failure is invisible: no log, no error,
+   just a call that never resolves.
+
+   Rather than bet on the classification, accept both. If we are handed a Web
+   Request, run as-is. If we are handed (req, res), build a Request from it,
+   run the same handler, and write the Response back. The raw body is preserved
+   as a string, which the Stripe/Dodo signature check depends on. */
+export function webHandler(fn) {
+  return async function (a, b) {
+    const isWeb = a && typeof a.headers?.get === 'function' && typeof a.arrayBuffer === 'function';
+    if (isWeb && !b) return fn(a);
+
+    const req = a, res = b;
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+    const url = `${proto}://${host}${req.url || '/'}`;
+
+    let body;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      if (typeof req.body === 'string') body = req.body;
+      else if (req.body && typeof req.body === 'object') body = JSON.stringify(req.body);
+      else body = await new Promise((resolve, reject) => {
+        let d = '';
+        req.on('data', (c) => { d += c; });
+        req.on('end', () => resolve(d));
+        req.on('error', reject);
+      });
+    }
+
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(req.headers || {})) {
+      if (Array.isArray(v)) v.forEach((x) => headers.append(k, x));
+      else if (v != null) headers.set(k, String(v));
+    }
+
+    const out = await fn(new Request(url, { method: req.method, headers, body }));
+    res.statusCode = out.status;
+    out.headers.forEach((v, k) => res.setHeader(k, v));
+    res.end(Buffer.from(await out.arrayBuffer()));
+  };
+}
+
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }

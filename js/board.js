@@ -126,7 +126,10 @@
           let r = await G.api('/api/photo', { slug: p.slug });
           if (!r || !r.photo_path) {
             // Say why, once, rather than leaving a silent wall of initials.
-            if (r && r.why && !fillPictures.warned) {
+            // Only latch on a site-wide cause. A per-person "no image found"
+            // is normal and must not suppress the message that matters.
+            var systemic = r && r.why && !/no image found|licence not verifiable/i.test(r.why);
+            if (systemic && !fillPictures.warned) {
               fillPictures.warned = true;
               console.warn('[goat] no picture for ' + p.slug + ': ' + r.why +
                 '\nOpen /api/photo in a browser for a full diagnosis.');
@@ -148,7 +151,15 @@
              attach. The handler also goes on before src, since a fast
              response can fire load before a later assignment would catch it. */
           img.onload = function () { var old = box.querySelector('.initials, img'); if (old) old.replaceWith(img); };
-          img.onerror = function () { /* keep the initials; they are a fine resting state */ };
+          img.onerror = function () {
+            // The endpoint said it stored this, but the public URL will not
+            // load — almost always a bucket that is not public. Say so once.
+            if (!fillPictures.imgWarned) {
+              fillPictures.imgWarned = true;
+              console.warn('[goat] stored ' + r.photo_path + ' but ' + img.src +
+                ' did not load. Is the "photos" bucket public? Run sql/schema.sql.');
+            }
+          };
           img.src = G.photoUrl(r.photo_path);
         } catch (e) {
           if (!fillPictures.warned) {
