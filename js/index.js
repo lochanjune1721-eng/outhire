@@ -113,6 +113,17 @@
         }).join('') + '</div>' +
       '</section>';
     }).join('');
+
+    /* Only now that the tiles exist can a resolved picture find its box.
+       Top two per board — the faces people actually see — and capped, because
+       a first visitor should not trigger three hundred lookups at once. Later
+       page views pick up where this left off, and each person is resolved for
+       the whole site exactly once. */
+    var faces = [];
+    Object.keys(byCat).forEach(function (k) {
+      byCat[k].slice(0, 2).forEach(function (p) { if (!p.photo_path) faces.push(p); });
+    });
+    if (faces.length) window.GBoard.fillPictures($('#groups'), faces.slice(0, 30));
   }
 
   /* total_cents desc, then first backed, then created -- the same rule the

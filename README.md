@@ -98,27 +98,38 @@ node scripts/make-seed-sql.mjs      # regenerates sql/seed.sql
 `sql/seed.sql` is safe to re-run: existing rows keep their id, their money and
 their position, and only names and grouping are refreshed.
 
-## Photos
+## Photos — the site fills itself in
 
-Every card renders without one — a missing photo becomes initials in the display
-face, gold on surface, which is a deliberate part of the design rather than a
-gap. To fill them in:
+**You do not have to run anything.** When a board renders anyone still showing
+initials, the page asks `/api/photo` for them. That endpoint finds their
+Wikipedia lead image, checks the licence, copies the bytes into your Supabase
+storage and writes `photo_path` back.
+
+So the lookup happens **once per person for the whole site**, not once per
+visitor. The first person to open a board pays a few hundred milliseconds; from
+then on everyone is served from your own bucket. Nothing is hotlinked.
+
+It also covers people added through the board for $1, who never existed when
+any seeding script ran — which is the real reason this belongs in the site
+rather than in a script.
+
+The image is requested from Wikipedia at 800px, so there is nothing to resize
+and no image library on the server. The deploy still has zero dependencies.
+
+### Warming it up in bulk (optional)
+
+If you would rather not have the first visitors do the work, the same job runs
+offline across all 2,926 at once:
 
 ```bash
 node scripts/fetch-photos.js --check          # what resolves; writes nothing
 npm install sharp
-node scripts/fetch-photos.js --tmdb           # the real run
+TMDB_API_KEY=… node scripts/fetch-photos.js --tmdb
 ```
 
-**Fetch once and store them yourself.** The full run downloads each image,
-crops it to 800×800 — the same crop the cards use — and pushes it to Supabase
-storage. There is a `--link-only` mode that points `photo_path` straight at the
-source instead; it is a two-minute way to see the boards populated, but it
-hotlinks, which is slow for visitors and something Wikimedia asks people not to
-do at scale. Don't launch on it.
-
-Flags: `--only=greatest-footballer`, `--limit=200`, `--concurrency=6`,
-`--force` (redo people who already have one).
+This does two things the live endpoint does not: it can use TMDB for the screen
+boards, and it crops to a true 800×800 square with `sharp` rather than taking
+Wikipedia's aspect ratio. Both are improvements, neither is required.
 
 ### Where the images come from
 

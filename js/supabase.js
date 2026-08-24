@@ -84,13 +84,15 @@
     opts = opts || {};
     var url = photoUrl(person && person.photo_path);
     var cls = 'ph' + (opts.plain ? ' plain' : '') + (opts.className ? ' ' + opts.className : '');
+    // Carry the slug so a picture resolved later can find its own box.
+    var mark = person && person.slug ? ' data-slug="' + esc(person.slug) + '"' : '';
     var cap = opts.caption ? '<span class="cap">' + esc(opts.caption) + '</span>' : '';
     var inner = url
       ? '<img src="' + esc(url) + '" alt="' + esc(person.name || '') + '" loading="lazy" decoding="async" ' +
         'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),' +
         '{className:\'initials\',textContent:this.dataset.i}))" data-i="' + esc(initials(person.name)) + '">'
       : '<div class="initials">' + esc(initials(person && person.name)) + '</div>';
-    return '<div class="' + cls + '"' + (opts.style ? ' style="' + opts.style + '"' : '') + '>' + inner + cap + '</div>';
+    return '<div class="' + cls + '"' + mark + (opts.style ? ' style="' + opts.style + '"' : '') + '>' + inner + cap + '</div>';
   }
 
   function fanName(u) {

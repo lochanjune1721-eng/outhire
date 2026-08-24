@@ -43,7 +43,7 @@
     opts = opts || {};
     var tier = tierOf(rank);
     return '' +
-      '<article class="row" data-tier="' + tier + '" data-person="' + G.esc(p.id) + '" data-rank="' + rank + '">' +
+      '<article class="row" data-tier="' + tier + '" data-person="' + G.esc(p.id) + '" data-slug="' + G.esc(p.slug) + '" data-rank="' + rank + '">' +
         '<span class="row-rank num">#' + rank + '</span>' +
         G.photo(p, { plain: true }) +
         '<div class="row-body">' +
@@ -96,6 +96,57 @@
       });
     }).join('');
     bind(host, rows);
+    fillPictures(host, rows);
+  }
+
+  /* ------------------------------------------------------------------
+     PICTURES — anyone still on initials gets resolved once, by whoever
+     happens to look at the board first. /api/photo copies the image into
+     our own storage and writes photo_path back, so this costs one lookup
+     per person for the whole site, not one per visitor. It also covers
+     people added through the board for $1, who no seeding script ever saw.
+     ------------------------------------------------------------------ */
+
+  var asked = {};   // never ask twice in one page view
+
+  async function fillPictures(host, rows) {
+    var missing = rows.filter(function (p) { return !p.photo_path && !asked[p.slug]; });
+    if (!missing.length) return;
+    missing.forEach(function (p) { asked[p.slug] = true; });
+
+    var i = 0;
+    async function worker() {
+      while (i < missing.length) {
+        /* let, not var: these are captured by the onload closure below, and
+           var is function-scoped — one binding shared by every iteration and
+           by all three workers, so by the time a load fired, box had already
+           been reassigned by a later person. */
+        let p = missing[i++];
+        try {
+          let r = await G.api('/api/photo', { slug: p.slug });
+          if (!r || !r.photo_path) continue;
+          p.photo_path = r.photo_path;
+          let sel = '[data-slug="' + (window.CSS && CSS.escape ? CSS.escape(p.slug) : p.slug) + '"]';
+          // A leaderboard row wraps its .ph; a homepage tile IS the .ph.
+          let found = document.querySelector(sel);
+          let box = !found ? null : found.classList.contains('ph') ? found : found.querySelector('.ph');
+          if (!box) continue;
+          let img = document.createElement('img');
+          img.alt = p.name;
+          img.decoding = 'async';
+          /* Deliberately NOT loading="lazy". This img starts detached and is
+             only attached once it loads, and a detached lazy image never
+             starts loading — so onload would never fire and it would never
+             attach. The handler also goes on before src, since a fast
+             response can fire load before a later assignment would catch it. */
+          img.onload = function () { var old = box.querySelector('.initials, img'); if (old) old.replaceWith(img); };
+          img.onerror = function () { /* keep the initials; they are a fine resting state */ };
+          img.src = G.photoUrl(r.photo_path);
+        } catch (e) { /* leave the initials; they are a fine resting state */ }
+      }
+    }
+    // Gentle: three at a time, so a 50-row board does not stampede.
+    await Promise.all([worker(), worker(), worker()]);
   }
 
   /* ------------------------------------------------------------------
@@ -199,6 +250,7 @@
   }
 
   window.GBoard = {
+    fillPictures: fillPictures,
     tierOf: tierOf, rowMarkup: rowMarkup, render: render, bind: bind,
     reorder: reorder, stakes: stakes, fanStrip: fanStrip, toast: toast
   };
