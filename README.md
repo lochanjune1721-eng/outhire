@@ -116,6 +116,27 @@ rather than in a script.
 The image is requested from Wikipedia at 800px, so there is nothing to resize
 and no image library on the server. The deploy still has zero dependencies.
 
+Two things to expect on a healthy deploy, so neither reads as a fault:
+
+- The first load of a board **starts as initials** and fills in over ten to
+  thirty seconds. Nothing is wrong; you are watching the site do the work once.
+- `/api/photo` needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set on
+  Vercel **and a redeploy afterwards.** Environment variables are baked in at
+  build time — adding them without redeploying changes nothing.
+
+### When nothing appears
+
+Open **`https://your-domain/api/photo`** in a browser. It answers with a
+diagnosis — booleans and counts only, never a key value — naming the first
+thing that is wrong and what to do about it: variables not set, the schema not
+run, the anon key pasted in where the service role key belongs, the `photos`
+bucket missing, or Wikipedia refusing your deployment.
+
+If that page says everything checks out but boards still show initials, open a
+board with the browser console visible. A site-wide cause prints once there. A
+person Wikipedia simply has no photo for stays quiet, because that is ordinary
+rather than a fault.
+
 ### Warming it up in bulk (optional)
 
 If you would rather not have the first visitors do the work, the same job runs

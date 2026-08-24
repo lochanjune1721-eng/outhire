@@ -107,7 +107,7 @@
      people added through the board for $1, who no seeding script ever saw.
      ------------------------------------------------------------------ */
 
-  var asked = {};   // never ask twice in one page view
+  var asked = {};   // in flight or already answered; failures are cleared below
 
   async function fillPictures(host, rows) {
     var missing = rows.filter(function (p) { return !p.photo_path && !asked[p.slug]; });
@@ -134,6 +134,11 @@
               console.warn('[goat] no picture for ' + p.slug + ': ' + r.why +
                 '\nOpen /api/photo in a browser for a full diagnosis.');
             }
+            /* A systemic failure is not this person's answer — it is the
+               deployment's. Forget we asked, so the next board that lists them
+               tries again once the cause is fixed, instead of needing a reload.
+               A genuine "no image found" stays remembered. */
+            if (systemic) delete asked[p.slug];
             continue;
           }
           p.photo_path = r.photo_path;
@@ -162,6 +167,9 @@
           };
           img.src = G.photoUrl(r.photo_path);
         } catch (e) {
+          // The request itself failed — offline, a 504, a cold start. Nothing
+          // was learned about this person, so do not hold their slug hostage.
+          delete asked[p.slug];
           if (!fillPictures.warned) {
             fillPictures.warned = true;
             console.warn('[goat] /api/photo failed: ' + (e && e.message) +

@@ -14,7 +14,17 @@
  */
 import { webHandler, json, bad, readJson, db, env, sbFetch } from './_lib.js';
 
-const UA = process.env.WIKI_UA || 'GOAT.lol/1.0 (https://goat.lol; caching lead images)';
+/* Wikimedia's UA policy asks for a real site and a way to reach a human, and
+   their edge blocks generic or fictional agents coming from cloud IPs — which
+   is exactly what a Vercel function is. Vercel sets the domain variables
+   itself, so the default is honest without any configuration; set WIKI_CONTACT
+   to an email you read, or WIKI_UA to override the whole string. */
+const SITE = process.env.WIKI_SITE ||
+  process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || '';
+const CONTACT = process.env.WIKI_CONTACT || '';
+const UA = process.env.WIKI_UA || ('GOATdotLOL/1.0 (' +
+  ([SITE ? 'https://' + SITE.replace(/^https?:\/\//, '') : 'https://github.com/lochanjune1721-eng/outhire',
+    CONTACT].filter(Boolean).join('; ')) + ')');
 const REST = process.env.WIKI_REST || 'https://en.wikipedia.org/api/rest_v1';
 const COMMONS = process.env.COMMONS_API || 'https://commons.wikimedia.org/w/api.php';
 
@@ -31,7 +41,13 @@ async function lead(name) {
   const res = await fetch(`${REST}/page/summary/${title}`, {
     headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000)
   });
-  if (!res.ok) return null;
+  /* 404 means no such page — a real answer, and null is right. Anything else
+     is Wikipedia refusing us (403 on the UA, 429 rate limit, 5xx), and
+     returning null there disguises a site-wide outage as "this one person has
+     no photo", which the board deliberately does not report. Throw instead, so
+     it reaches the browser console and the diagnosis endpoint. */
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Wikipedia returned ${res.status} for ${name}`);
   const d = await res.json();
   const src = d?.thumbnail?.source;
   if (!src) return null;
@@ -48,7 +64,8 @@ async function licence(file) {
     prop: 'imageinfo', iiprop: 'extmetadata'
   });
   const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) return null;
+  // Same reasoning as lead(): a refusal is not an unlicensed file.
+  if (!res.ok) throw new Error(`Commons returned ${res.status} for ${file}`);
   const body = await res.json();
   const em = Object.values(body?.query?.pages || {})[0]?.imageinfo?.[0]?.extmetadata;
   if (!em) return null;
@@ -110,10 +127,19 @@ async function diagnose() {
     out.checks.photos_bucket = !!b;
   } catch (e) {
     out.checks.photos_bucket = false;
-    out.next = out.next || 'The photos storage bucket is missing. Run sql/schema.sql.';
+    out.checks.photos_bucket_error = e && e.message ? e.message : String(e);
+    /* A 401/403 here is not a missing bucket — it is the anon key pasted into
+       SUPABASE_SERVICE_ROLE_KEY. Both look identical from the outside, and
+       sending someone to re-run the schema when their key is wrong wastes an
+       afternoon. */
+    out.next = out.next || (e && (e.status === 401 || e.status === 403)
+      ? 'Supabase refused this key (' + e.status + '). SUPABASE_SERVICE_ROLE_KEY is set but is not ' +
+        'the service role key — the anon key looks the same and is the usual mistake. ' +
+        'Supabase -> Project Settings -> API -> service_role, then redeploy.'
+      : 'The photos storage bucket is missing. Run sql/schema.sql.');
   }
 
-  out.ok = Object.values(out.checks).every((v) => v !== false);
+  out.ok = Object.values(out.checks).every((v) => v !== false) && !out.checks.photos_bucket_error;
   if (out.ok && !out.next) {
     out.next = 'Everything checks out. Open a board and the pictures will fill in. ' +
                'POST {"slug":"lionel-messi"} here to resolve one by hand.';
@@ -149,7 +175,7 @@ export default webHandler(async function handler(request) {
       return json({ photo_path: null, why: `licence not verifiable (${meta?.licence || 'unknown'})` });
     }
 
-    const img = await fetch(hit.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) });
+    const img = await fetch(hit.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
     if (!img.ok) return json({ photo_path: null, why: 'download failed' });
     const bytes = Buffer.from(await img.arrayBuffer());
     if (bytes.length > 5 * 1024 * 1024) return json({ photo_path: null, why: 'image too large' });
@@ -169,9 +195,20 @@ export default webHandler(async function handler(request) {
     });
     if (!up.ok) return json({ photo_path: null, why: `upload failed (${up.status})` });
 
-    await db.update('people', db.eq('id', person.id), {
-      photo_path: path, photo_credit: meta.author, photo_license: meta.licence
-    });
+    /* The bytes are in the bucket now. If the row cannot be updated, the file
+       is still good and the caller should still show it — but every later
+       visitor would re-download it forever, so say so out loud. */
+    try {
+      await db.update('people', db.eq('id', person.id), {
+        photo_path: path, photo_credit: meta.author, photo_license: meta.licence
+      });
+    } catch (e) {
+      console.error('[photo] stored %s but could not write photo_path:', path, e);
+      return json({
+        photo_path: path, credit: meta.author, license: meta.licence,
+        why: 'stored the image but could not save it to the row: ' + (e && e.message ? e.message : String(e))
+      });
+    }
 
     return json({ photo_path: path, credit: meta.author, license: meta.licence });
   } catch (e) {

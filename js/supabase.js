@@ -288,7 +288,10 @@
     });
     var data = null;
     try { data = await res.json(); } catch (e) {}
-    if (!res.ok) throw new Error((data && data.error) || ('Request failed (' + res.status + ').'));
+    /* Our endpoints answer with `error` when they refuse and `why` when
+       they tried and could not. Reading only `error` threw away the one
+       sentence written for the case you actually hit. */
+    if (!res.ok) throw new Error((data && (data.error || data.why)) || ('Request failed (' + res.status + ').'));
     return data;
   }
 
