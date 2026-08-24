@@ -1,0 +1,8 @@
+{
+  "name": "outhire",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A public leaderboard of candidates bidding on themselves. Static HTML, CSS and JS with Vercel functions for Stripe.",
+  "type": "module",
+  "engines": { "node": ">=18" }
+}

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Entry — Outhire</title>
+<meta name="theme-color" content="#EDEAE3">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="entry">
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="masthead-inner">
+      <div><a class="wordmark display" href="/">Outhire</a></div>
+    </div>
+  </div>
+  <nav class="nav" aria-label="Primary">
+    <div class="wrap" style="display:flex;flex-wrap:wrap">
+      <a href="/">Leaderboard</a>
+      <a href="/submit.html">Enter</a>
+      <a href="/recruiters.html">Recruiters</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="solo" id="solo">
+    <p class="empty muted">Loading.</p>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
+    <p class="muted">Ranks are held by the highest standing bid. Ties go to whoever got there first.</p>
+    <a href="/">Back to the leaderboard</a>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/config.js"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/feed.js"></script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Upload your video — Outhire</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#EDEAE3">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="upload">
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="masthead-inner">
+      <div><a class="wordmark display" href="/">Outhire</a></div>
+    </div>
+  </div>
+  <nav class="nav" aria-label="Primary">
+    <div class="wrap" style="display:flex;flex-wrap:wrap">
+      <a href="/">Leaderboard</a>
+      <a href="/submit.html">Enter</a>
+      <a href="/recruiters.html">Recruiters</a>
+    </div>
+  </nav>
+</header>
+
+<main class="wrap-narrow page">
+  <h1 class="display">Your forty-five seconds</h1>
+  <p class="lede" id="intro">Checking your upload link.</p>
+
+  <div id="status" class="notice" hidden></div>
+
+  <section id="uploader" hidden>
+    <div class="dropzone" id="dropzone">
+      <p>Drop the file here, or pick it from your device.</p>
+      <p class="hint muted">MP4, MOV or WebM. Portrait. Twenty to forty-five seconds. Under <span class="num">50MB</span>.</p>
+      <p style="margin-top:16px">
+        <label class="btn" for="file" style="display:inline-block">Choose file</label>
+        <input id="file" type="file" accept="video/mp4,video/quicktime,video/webm,video/*" class="sr-only">
+      </p>
+    </div>
+
+    <ul class="checklist" id="checks" hidden>
+      <li data-check="duration"><span>Length</span><span class="state num">—</span></li>
+      <li data-check="min"><span>At least 20 seconds</span><span class="state num">—</span></li>
+      <li data-check="portrait"><span>Portrait, 9:16</span><span class="state num">—</span></li>
+      <li data-check="size"><span>Under 50MB</span><span class="state num">—</span></li>
+    </ul>
+
+    <div class="preview" id="preview" hidden>
+      <video id="preview-video" playsinline muted controls></video>
+    </div>
+
+    <div id="upload-error" class="notice" hidden></div>
+
+    <div class="progress" id="progress" hidden><i></i></div>
+    <p class="hint num" id="progress-label" hidden>0%</p>
+
+    <div class="form-actions">
+      <button class="btn-claim" type="button" id="upload-btn" style="width:auto;min-width:220px" disabled>Upload and submit</button>
+      <span class="hint muted">Goes to review before it appears on the board.</span>
+    </div>
+  </section>
+
+  <!-- Duration is read here, off-screen, before anything leaves the device. -->
+  <video id="probe" class="sr-only" preload="metadata" muted playsinline></video>
+</main>
+
+<footer class="foot">
+  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
+    <p class="muted">Forty-five seconds is the whole format. It is not negotiable.</p>
+    <a href="/">Back to the leaderboard</a>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/config.js"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/upload.js"></script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Outhire — the public record of people bidding on themselves</title>
+<meta name="description" content="Candidates film 45 seconds on why they should be hired, then bid to hold the top of a public leaderboard. Recruiters browse by role.">
+<meta name="theme-color" content="#EDEAE3">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="index">
+
+<a class="skip" href="#ledger">Skip to the leaderboard</a>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="masthead-inner">
+      <div>
+        <h1 class="wordmark display">Outhire</h1>
+        <p class="masthead-sub">Forty-five seconds on why you should be hired, and a bid to sit at the top of it. Paying and filming is the filter.</p>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-val num" id="stat-visitors">—</div>
+          <div class="stat-key">Visitors since launch</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val num" id="stat-entries">—</div>
+          <div class="stat-key">Entries live</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val num" id="stat-top">—</div>
+          <div class="stat-key">Top bid</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="ticker">
+    <div class="wrap">
+      <span class="live-dot" aria-hidden="true"></span><span id="revenue-line">This side project has made <span class="num">$0</span> since launch.</span>
+    </div>
+  </div>
+  <nav class="nav" aria-label="Primary">
+    <div class="wrap" style="display:flex;flex-wrap:wrap">
+      <a href="/" aria-current="page">Leaderboard</a>
+      <a href="/submit.html">Enter</a>
+      <a href="/recruiters.html">Recruiters</a>
+      <a href="#activity">Activity</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <div class="stage">
+    <div class="feed" id="feed" tabindex="-1" aria-label="Entry feed">
+      <div class="feed-empty" id="feed-loading">
+        <p class="label">Loading the ledger</p>
+      </div>
+    </div>
+    <aside class="rail" aria-label="Leaderboard">
+      <div class="rail-head">
+        <span class="section-title">Standing</span>
+        <span class="label num" id="rail-count">—</span>
+      </div>
+      <div id="rail-rows"></div>
+    </aside>
+  </div>
+
+  <section class="section" id="activity">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 class="section-title"><span class="live-dot" aria-hidden="true"></span>Latest bids</h2>
+        <span class="label muted" id="activity-note">Last 10</span>
+      </div>
+      <ul class="activity" id="activity-list" aria-live="polite">
+        <li class="muted">No bids yet.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="ledger">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 class="section-title">The ledger</h2>
+        <div class="tabs" role="group" aria-label="Time range">
+          <button class="chip" type="button" data-scope="all" aria-pressed="true">All-time</button>
+          <button class="chip" type="button" data-scope="today" aria-pressed="false">Today</button>
+        </div>
+      </div>
+
+      <div class="filters" id="filters" role="group" aria-label="Filter by role"></div>
+
+      <div class="table-scroll">
+        <table class="ledger">
+          <caption class="sr-only">Live entries ranked by current bid</caption>
+          <thead>
+            <tr>
+              <th class="c-rank" scope="col">Rank</th>
+              <th class="c-name" scope="col">Name</th>
+              <th class="c-role" scope="col">Role</th>
+              <th class="c-bid" scope="col">Bid</th>
+              <th class="c-click" scope="col">Clicks</th>
+              <th class="c-when" scope="col">Last bid</th>
+              <th class="c-act" scope="col"><span class="sr-only">Claim</span></th>
+            </tr>
+          </thead>
+          <tbody id="ledger-rows">
+            <tr><td colspan="7" class="muted">Loading.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pager">
+        <span class="label num" id="pager-range">—</span>
+        <div class="btn-row">
+          <button class="btn btn-ghost" type="button" id="prev-page" disabled>Previous</button>
+          <button class="btn btn-ghost" type="button" id="next-page" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap" style="display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap">
+    <div>
+      <p>Outhire. A public record of people staking money on themselves.</p>
+      <p class="muted">Minimum bid $5. Video is 45 seconds, no exceptions.</p>
+    </div>
+    <div class="btn-row">
+      <a class="btn" href="/submit.html">Take a rank</a>
+      <a class="btn btn-ghost" href="/recruiters.html">Make a board</a>
+    </div>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/config.js"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/feed.js"></script>
+</body>
+</html>
