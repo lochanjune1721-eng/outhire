@@ -98,24 +98,51 @@ node scripts/make-seed-sql.mjs      # regenerates sql/seed.sql
 `sql/seed.sql` is safe to re-run: existing rows keep their id, their money and
 their position, and only names and grouping are refreshed.
 
-## Photos are optional
+## Photos
 
 Every card renders without one — a missing photo becomes initials in the display
 face, gold on surface, which is a deliberate part of the design rather than a
 gap. To fill them in:
 
 ```bash
+node scripts/fetch-photos.js --check        # what resolves; writes nothing
+node scripts/fetch-photos.js --link-only    # fast: point at Commons directly
 npm install sharp
-node scripts/fetch-photos.js --check     # what would resolve, writes nothing
-node scripts/fetch-photos.js
+node scripts/fetch-photos.js                # full: download, 800x800, cache
 ```
 
-It looks each person up **by name**, because the names are already curated —
-far more reliable than asking Wikidata for "people whose occupation is X" and
-hoping the QID was right. Licences are verified before anything is stored;
-Commons mixes freely reusable files with fair-use ones, and a fair-use portrait
-on a site where people spend money is a real problem, not a cosmetic one.
-Anything unverifiable is skipped and that person keeps their initials.
+`--link-only` finishes in minutes, needs no `sharp` and no storage, and gets
+pictures on the board today. It points `photo_path` at Commons URLs, so the
+images are hotlinked — fine at launch traffic, but run the full mode before you
+have real traffic, because Wikimedia asks people not to hotlink at scale and you
+get no control over sizing or availability.
+
+Useful flags: `--only=greatest-footballer`, `--limit=200`, `--concurrency=6`,
+`--force` (redo people who already have one).
+
+Three things make this survivable across 2,926 names:
+
+- **Batched.** Title lookups go 50 at a time, so a full run is roughly 700 API
+  calls rather than ~5,900.
+- **Resumable.** Anyone who already has a photo is skipped, so an interrupted
+  run costs nothing — just start it again.
+- **Search fallback.** Exact-title lookup misses plenty of these (`1996 Chicago
+  Bulls`, `Pizza`, `MrBeast`), so anything not found by title is searched for.
+
+Licences are verified before anything is stored. Commons mixes freely reusable
+files with fair-use ones, and a fair-use portrait on a site where people spend
+money is a real problem, not a cosmetic one. Anything unverifiable is skipped,
+that person keeps their initials, and every miss is written to
+`photo-misses.json` with the reason so you can fill the ones that matter in
+`/admin.html`.
+
+Expect real coverage to be partial. People and clubs resolve well; dishes,
+cuisines and single-year team lineups often do not. That is what the initials
+tile is for.
+
+**`sharp` is deliberately not a dependency.** The deployed site has none at all
+— the serverless functions use `fetch` and `node:crypto` only — so install it ad
+hoc when you want the full photo pass and leave the deploy clean.
 
 ## One thing I could not verify
 
