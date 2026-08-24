@@ -30,7 +30,7 @@
  */
 
 import { BOARDS } from './goat-data.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const has = (n) => args.some((a) => a === `--${n}` || a.startsWith(`--${n}=`));
@@ -63,7 +63,16 @@ const TMDB_KIND = {
   'greatest-tv-show': 'tv',             'greatest-anime': 'tv'
 };
 const COMMONS = process.env.COMMONS_API || 'https://commons.wikimedia.org/w/api.php';
-const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/$/, '');
+/* The project URL already lives in js/config.js, so don't make anyone set it
+   twice. Only the service role key has to come from the environment. */
+function urlFromConfig() {
+  try {
+    const txt = readFileSync(new URL('../js/config.js', import.meta.url), 'utf8');
+    const m = txt.match(/SUPABASE_URL:\s*'([^']+)'/);
+    return m && m[1].startsWith('http') ? m[1] : null;
+  } catch { return null; }
+}
+const SUPABASE_URL = (process.env.SUPABASE_URL || urlFromConfig() || '').replace(/\/$/, '');
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // A real contact address is required by the Wikimedia user-agent policy.
@@ -279,7 +288,7 @@ async function main() {
   const boards = ONLY ? BOARDS.filter((b) => b.slug === ONLY) : BOARDS;
   if (!boards.length) { console.error(`No board called "${ONLY}".`); process.exit(1); }
   if (!CHECK && (!SUPABASE_URL || !SERVICE_KEY)) {
-    console.error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, or pass --check.');
+    console.error('Set SUPABASE_SERVICE_ROLE_KEY (Supabase -> Settings -> API), or pass --check.');
     process.exit(1);
   }
   if (!CHECK && !LINK_ONLY && !(await loadSharp())) {
