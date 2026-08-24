@@ -4,8 +4,9 @@
   "type": "module",
   "description": "Pay-to-rank leaderboards for the greatest of all time. Static front end, no build step; Vercel functions use fetch and node:crypto only.",
   "scripts": {
-    "seed:check": "node scripts/seed.js --check",
-    "seed": "node scripts/seed.js"
+    "seed:sql": "node scripts/make-seed-sql.mjs",
+    "photos:check": "node scripts/fetch-photos.js --check",
+    "photos": "node scripts/fetch-photos.js"
   },
   "optionalDependencies": {
     "sharp": "^0.33.0"

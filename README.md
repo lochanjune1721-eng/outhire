@@ -71,27 +71,56 @@ one place (`.ph` in `css/style.css`) and every photo goes through `G.photo()`.
 
 ---
 
-## Two things I could not verify, and what I did about them
+## The boards
 
-The sandbox this was built in blocks outbound HTTPS to both `wikidata.org` and
-Dodo's docs, so neither could be checked against the live source.
+**147 boards, 2,926 contenders, curated by hand.** There is no Wikidata query
+behind this and nothing in it is a placeholder — `scripts/goat-data.js` is the
+single source of truth, and `sql/seed.sql` is generated from it.
 
-**1. The Wikidata QIDs in `scripts/categories.js` are unverified.** A wrong QID
-produces an empty or absurd board rather than an error, so the seed script
-self-checks:
+Ten boards hold fewer than 20 because that is how many real entries exist —
+there have only ever been 15 Indian prime ministers. They are left short on
+purpose: a board with 15 real names beats one padded to 20 with invented ones,
+and anyone can add a missing name for $1.
+
+**Everyone seeds at $0 and nobody is pre-ranked.** The first $1 on a board takes
+#1. Since every total starts equal, the ranking rule falls through to
+`created_at`, so the seed spaces that by the curated position — the board opens
+in the hand-picked order rather than an arbitrary one, without anyone holding a
+cent.
+
+Editing the list:
 
 ```bash
-node scripts/seed.js --check          # queries every board, writes nothing
+# edit scripts/goat-data.js, then
+node scripts/make-seed-sql.mjs      # regenerates sql/seed.sql
 ```
 
-It prints, per board, the result count, how many have photos, and the top three
-names it would seed — then lists every board that returned nothing. Fix those
-QIDs before seeding for real. The cricket boards in particular all share the
-`cricketer` occupation because Wikidata has no separate batsman/bowler QID; they
-need either manual curation or a different query.
+`sql/seed.sql` is safe to re-run: existing rows keep their id, their money and
+their position, and only names and grouping are refreshed.
 
-**2. Dodo's exact API shape is unverified.** Everything Dodo-specific is confined
-to three functions at the bottom of `api/_lib.js`. Verify before going live:
+## Photos are optional
+
+Every card renders without one — a missing photo becomes initials in the display
+face, gold on surface, which is a deliberate part of the design rather than a
+gap. To fill them in:
+
+```bash
+npm install sharp
+node scripts/fetch-photos.js --check     # what would resolve, writes nothing
+node scripts/fetch-photos.js
+```
+
+It looks each person up **by name**, because the names are already curated —
+far more reliable than asking Wikidata for "people whose occupation is X" and
+hoping the QID was right. Licences are verified before anything is stored;
+Commons mixes freely reusable files with fair-use ones, and a fair-use portrait
+on a site where people spend money is a real problem, not a cosmetic one.
+Anything unverifiable is skipped and that person keeps their initials.
+
+## One thing I could not verify
+
+**Dodo's exact API shape.** Everything Dodo-specific is confined to three
+functions at the bottom of `api/_lib.js`. Verify before going live:
 
 - `DODO_API_BASE` — test vs live host
 - `createDodoCheckout()` — endpoint path and body field names
@@ -105,8 +134,6 @@ If Dodo differs, only those three functions change.
 A site where people pay to rank public figures *and* hold a stored balance is
 unusual on both counts. Their docs say a rejected product gets one appeal and
 that decision is final, so this is worth a conversation before more work goes in.
-
----
 
 ## Setup
 
@@ -124,20 +151,13 @@ that decision is final, so this is worth a conversation before more work goes in
    build step, so env vars cannot reach static files; the anon key is public by
    design. Nothing secret goes there.
 3. **Vercel env** — copy `.env.example` into the project's environment variables.
-4. **Seed** — `node scripts/seed.js --check`, fix bad QIDs, then
-   `npm install sharp && node scripts/seed.js`.
-5. **Review** — open `/admin.html` and go board by board. Auto-fetch gives
-   roughly 60% usable photos and some odd name choices. Three minutes a board is
-   the difference between a site that looks made and one that looks scraped.
-6. **Dodo webhook** — point it at `https://yourdomain/api/payment-done`.
-
-**Everyone seeds at $0.** Nobody is pre-ranked. An empty board where the first $1
-takes #1 is a far better first-user experience than one where someone is already
-on top for no reason — which is also why most boards being empty at launch is
-framed as an offer (`41 boards where #1 is still open. $1 takes it.`) rather than
-a graveyard.
-
----
+4. **Seed** — run `sql/seed.sql` in the same SQL editor. 147 boards and 2,926
+   people, no network required. The site is fully live at this point.
+5. **Photos** (optional) — `npm install sharp && node scripts/fetch-photos.js`.
+6. **Review** — open `/admin.html` and go board by board: swap bad photos,
+   delete wrong entries, add missing names. Three minutes a board is the
+   difference between a site that looks made and one that looks scraped.
+7. **Dodo webhook** — point it at `https://yourdomain/api/payment-done`.
 
 ## Files
 
@@ -160,9 +180,11 @@ api/checkout.js     create a pending topup, return Dodo's link
 api/payment-done.js the webhook — the only place credit is added
 api/admin.js        server-side password check, photo swaps, deletes
 
-scripts/categories.js  the ~83 boards
-scripts/seed.js        Wikidata → Commons → Supabase, with --check
-sql/schema.sql
+scripts/goat-data.js       147 boards, 2,926 names — the source of truth
+scripts/make-seed-sql.mjs  regenerates sql/seed.sql from it
+scripts/fetch-photos.js    optional Commons photo pass, licence-checked
+sql/schema.sql             tables, place_bid, RLS, storage
+sql/seed.sql               generated: the boards and their contenders
 ```
 
 ---
@@ -198,6 +220,10 @@ just read over. What passed:
 
 - the reported `column "person_id" does not exist` reproduced, fixed, and the
   script then re-run three times cleanly on the same dirty database
+- `sql/seed.sql` applied on top: 147 boards, 2,926 people, every board covered,
+  zero placeholder names, and re-running changed nothing
+- with the real seed loaded, $1 on an all-zero board takes #1; a $1 tie does not
+  take it (the earlier-backed entry keeps the rank); $6 does
 - $1 minimum, whole dollars, and insufficient balance all refused
 - the $5 rule: with the leader at $10, a $11 bid is refused with
   *"needs $15 here, not $11"*, $14 is refused, $15 is accepted at rank 1

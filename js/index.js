@@ -22,7 +22,7 @@
         '<div class="tile-empty"><b>#1 is open</b>$1 takes it</div></a>';
     }
 
-    var gap = two ? one.total_cents - two.total_cents : one.total_cents;
+    var gap = Math.max(0, two ? one.total_cents - two.total_cents : one.total_cents);
     return '<a class="tile" href="/category.html?slug=' + G.esc(cat.slug) + '">' +
       '<div class="tile-head">' +
         '<span class="tile-name">' + G.esc(cat.name) + '</span>' +
@@ -59,6 +59,11 @@
     (res.data || []).forEach(function (p) {
       (byCat[p.category_id] = byCat[p.category_id] || []).push(p);
     });
+
+    /* The tile names #1, #2 and the gap between them, which is the line meant
+       to make someone reach for their balance -- so it must not depend on the
+       rows arriving pre-sorted. Apply the ranking rule here as well. */
+    Object.keys(byCat).forEach(function (k) { byCat[k].sort(rank); });
 
     var unclaimed = cats.filter(function (c) {
       var t = byCat[c.id];
@@ -108,6 +113,16 @@
         }).join('') + '</div>' +
       '</section>';
     }).join('');
+  }
+
+  /* total_cents desc, then first backed, then created -- the same rule the
+     database uses, so the client can never disagree with the board. */
+  function rank(a, b) {
+    if ((b.total_cents || 0) !== (a.total_cents || 0)) return (b.total_cents || 0) - (a.total_cents || 0);
+    var af = a.first_backed_at ? Date.parse(a.first_backed_at) : Infinity;
+    var bf = b.first_backed_at ? Date.parse(b.first_backed_at) : Infinity;
+    if (af !== bf) return af - bf;
+    return Date.parse(a.created_at) - Date.parse(b.created_at);
   }
 
   function groupTotal(cats, byCat) {
