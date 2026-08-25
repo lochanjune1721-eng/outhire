@@ -23,7 +23,8 @@
     host.innerHTML =
       '<div class="person">' +
         '<div>' +
-          G.photo(p, { plain: true }) +
+          G.photo(p, { plain: true, size: 320, priority: 'high',
+                       sizes: '(max-width: 720px) 92vw, 320px' }) +
           (p.photo_credit || p.photo_license
             ? '<p class="credit">Photo: ' + G.esc(p.photo_credit || 'unknown') +
               (p.photo_license ? ' · ' + G.esc(p.photo_license) : '') + '</p>'
@@ -58,12 +59,9 @@
         '</div>' +
       '</div>';
 
-    /* This page never resolved a picture — it rendered whatever photo_path
-       already existed and stopped. On a fresh site that is always null, so a
-       person page showed initials forever no matter how often it was opened. */
-    if (!p.photo_path && window.GBoard) {
-      window.GBoard.fillPictures(host, [p]);
-    }
+    /* Nothing to resolve: the row arrived with its thumbnail URL. This only
+       binds the fallback and starts any below-fold observers on the page. */
+    window.GImg.activate(host);
 
     host.addEventListener('click', async function (e) {
       var step = e.target.closest('[data-step]');

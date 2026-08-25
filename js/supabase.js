@@ -79,20 +79,10 @@
   }
 
   /* Every photo goes through here, so the treatment is impossible to skip.
-     A missing photo renders initials, which has to look deliberate. */
+     The markup itself is GImg's job — sizing, priority, placeholder — and
+     this stays as the name the rest of the code already calls. */
   function photo(person, opts) {
-    opts = opts || {};
-    var url = photoUrl(person && person.photo_path);
-    var cls = 'ph' + (opts.plain ? ' plain' : '') + (opts.className ? ' ' + opts.className : '');
-    // Carry the slug so a picture resolved later can find its own box.
-    var mark = person && person.slug ? ' data-slug="' + esc(person.slug) + '"' : '';
-    var cap = opts.caption ? '<span class="cap">' + esc(opts.caption) + '</span>' : '';
-    var inner = url
-      ? '<img src="' + esc(url) + '" alt="' + esc(person.name || '') + '" loading="lazy" decoding="async" ' +
-        'onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),' +
-        '{className:\'initials\',textContent:this.dataset.i}))" data-i="' + esc(initials(person.name)) + '">'
-      : '<div class="initials">' + esc(initials(person && person.name)) + '</div>';
-    return '<div class="' + cls + '"' + mark + (opts.style ? ' style="' + opts.style + '"' : '') + '>' + inner + cap + '</div>';
+    return window.GImg.markup(person, opts || {});
   }
 
   function fanName(u) {
@@ -105,8 +95,13 @@
 
   /* ------------------------------ queries -------------------------------- */
 
+  /* The image columns come down with the row. That is the architecture: the
+     browser is handed a thumbnail URL it can use immediately and never asks
+     anything about images again. */
   var PCOLS = 'id,slug,category_id,name,blurb,wikipedia_url,photo_path,photo_credit,' +
-              'photo_license,total_cents,backer_count,first_backed_at,created_at';
+              'photo_license,total_cents,backer_count,first_backed_at,created_at,' +
+              'wikimedia_thumbnail_url,wikimedia_width,wikimedia_height,' +
+              'wikimedia_page_url,image_license,image_author,image_status';
 
   async function categories() {
     if (OFFLINE) return [];
@@ -193,7 +188,7 @@
 
   async function search(term) {
     if (OFFLINE || !term || term.length < 2) return [];
-    var r = await sb.from('people').select('slug,name,photo_path,total_cents,categories(name)')
+    var r = await sb.from('people').select('slug,name,photo_path,wikimedia_thumbnail_url,wikimedia_width,image_status,total_cents,categories(name)')
       .ilike('name', '%' + term + '%')
       .order('total_cents', { ascending: false }).limit(8);
     return r.data || [];

@@ -33,6 +33,38 @@
 
   $('#cat').addEventListener('change', function () { slug = this.value; load(); });
 
+  /* What the Wikimedia resolver decided, and the three things you can do
+     about it. An uncertain match is shown here — larger than the site would
+     ever render it — precisely so it can be looked at before it goes live. */
+  function imageBlock(p) {
+    var status = p.image_status || 'pending';
+    var colour = { verified: 'var(--gold)', needs_review: '#e8a54a', missing: 'var(--muted)' }[status] || 'var(--muted)';
+    var preview = p.wikimedia_thumbnail_url
+      ? '<a href="' + G.esc(p.wikimedia_page_url || p.wikimedia_thumbnail_url) + '" target="_blank" rel="noopener noreferrer">' +
+          '<img src="' + G.esc(p.wikimedia_thumbnail_url) + '" alt="" width="120" height="120" ' +
+          'style="width:120px;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--line)" ' +
+          'loading="lazy" decoding="async"></a>'
+      : '<span class="muted" style="font-size:12px">no file</span>';
+
+    return '<div class="field"><label>Wikimedia image ' +
+      '<span style="color:' + colour + '">— ' + G.esc(status) + '</span></label>' +
+      '<div style="display:flex;gap:12px;align-items:flex-start">' + preview +
+        '<div style="flex:1;min-width:0;font-size:12px" class="muted">' +
+          (p.wikimedia_file_title ? G.esc(p.wikimedia_file_title) + '<br>' : '') +
+          (p.image_license ? 'licence: ' + G.esc(p.image_license) + '<br>' : '') +
+          (p.image_author ? 'by ' + G.esc(p.image_author) + '<br>' : '') +
+          (p.image_note ? '<b style="color:#e8a54a">' + G.esc(p.image_note) + '</b><br>' : '') +
+          '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+            (status === 'verified' ? '' :
+              '<button class="btn btn-sm btn-gold" type="button" data-img="verified">Use this</button>') +
+            (p.wikimedia_thumbnail_url
+              ? '<button class="btn btn-sm" type="button" data-img="missing">Wrong — drop it</button>' : '') +
+            '<button class="btn btn-sm" type="button" data-img="pending">Look again</button>' +
+          '</div>' +
+        '</div>' +
+      '</div></div>';
+  }
+
   async function load() {
     var host = $('#rows');
     if (!slug) { host.innerHTML = '<p class="muted">Pick a board.</p>'; return; }
@@ -41,8 +73,8 @@
       var r = await G.api('/api/admin', { action: 'list', token: token, slug: slug });
       host.innerHTML =
         r.people.map(function (p) {
-          return '<div class="row" data-id="' + G.esc(p.id) + '" style="align-items:flex-start">' +
-            G.photo(p, { plain: true, style: 'width:72px' }) +
+          return '<div class="row" data-id="' + G.esc(p.id) + '" data-slug="' + G.esc(p.slug || '') + '" style="align-items:flex-start">' +
+            G.photo(p, { plain: true, style: 'width:72px', size: 72, priority: 'eager' }) +
             '<div class="row-body">' +
               '<div class="field" style="margin-top:0"><label>Name</label><input data-f="name" value="' + G.esc(p.name || '') + '"></div>' +
               '<div class="field"><label>One line</label><input data-f="blurb" value="' + G.esc(p.blurb || '') + '"></div>' +
@@ -50,6 +82,7 @@
                 '<input data-f="photo_path" value="' + G.esc(p.photo_path || '') + '"></div>' +
               '<div class="field"><label>Photo credit</label><input data-f="photo_credit" value="' + G.esc(p.photo_credit || '') + '"></div>' +
               '<div class="field"><label>Licence</label><input data-f="photo_license" value="' + G.esc(p.photo_license || '') + '"></div>' +
+              imageBlock(p) +
               '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
                 '<button class="btn btn-sm btn-gold" type="button" data-save>Save</button>' +
                 (p.total_cents > 0
@@ -75,6 +108,35 @@
     var save = e.target.closest('[data-save]');
     var del = e.target.closest('[data-del]');
     var add = e.target.closest('#new-go');
+    var img = e.target.closest('[data-img]');
+
+    if (img) {
+      var irow = img.closest('.row');
+      var inote = irow.querySelector('[data-note]');
+      img.disabled = true;
+      inote.textContent = 'Saving.';
+      try {
+        var verdict = img.getAttribute('data-img');
+        await G.api('/api/admin', {
+          action: 'image', token: token, id: irow.getAttribute('data-id'), verdict: verdict
+        });
+        /* "Look again" only clears the verdict; the resolve itself is a
+           separate call, so ask for it here rather than leaving the row
+           pending until the next bulk run. */
+        if (verdict === 'pending') {
+          var slugAttr = irow.getAttribute('data-slug');
+          if (slugAttr) {
+            inote.textContent = 'Searching Wikimedia.';
+            try { await G.api('/api/photo', { slug: slugAttr, force: true }); } catch (x) {}
+          }
+        }
+        load();
+      } catch (err) {
+        inote.textContent = err.message;
+        img.disabled = false;
+      }
+      return;
+    }
 
     if (add) {
       add.disabled = true;

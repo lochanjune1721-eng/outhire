@@ -34,6 +34,32 @@ export default webHandler(async function handler(request) {
       return json({ ok: true });
     }
 
+    /* An uncertain Wikimedia match is stored but withheld from the site until
+       somebody looks at it. This is the looking. Without it, needs_review is a
+       pile that only grows and no image ever escapes it. */
+    if (b.action === 'image') {
+      if (!b.id) return bad('No person named.');
+      const verdict = String(b.verdict || '');
+      if (!['verified', 'missing', 'pending'].includes(verdict)) {
+        return bad('Verdict must be verified, missing, or pending.');
+      }
+      const patch = { image_status: verdict, image_last_checked: new Date().toISOString() };
+      if (verdict === 'verified') patch.image_note = null;
+      if (verdict === 'missing') {
+        // Rejecting a face means dropping it, not leaving it where a later
+        // approval could attach it by accident.
+        patch.image_note = 'rejected by hand';
+        patch.wikimedia_thumbnail_url = null;
+        patch.wikimedia_file_title = null;
+        patch.wikimedia_original_url = null;
+        patch.wikimedia_page_url = null;
+      }
+      // 'pending' clears the attempt count so the resolver tries again.
+      if (verdict === 'pending') patch.image_attempts = 0;
+      await db.update('people', db.eq('id', b.id), patch);
+      return json({ ok: true, image_status: verdict });
+    }
+
     if (b.action === 'delete') {
       if (!b.id) return bad('No person named.');
       const person = await db.one('people', db.eq('id', b.id));

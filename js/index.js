@@ -12,8 +12,16 @@
   /* The signature tile: #1's photo large, #2's smaller beside it, both totals
      underneath, and the gap stated. The gap is what makes someone reach for
      their balance. */
-  function tile(cat, top) {
+  /* .tile-faces .one is fluid (flex: 1) and .two is 38% of the tile, which is
+     roughly 200px and 90px in a three-column grid. aboveFold comes from the
+     caller: only the opening group's first tiles get eager treatment. */
+  var TILE_ONE_SIZES = '(max-width: 720px) 44vw, (max-width: 1000px) 30vw, 200px';
+  var TILE_TWO_SIZES = '(max-width: 720px) 24vw, (max-width: 1000px) 14vw, 90px';
+
+  function tile(cat, top, aboveFold) {
     var one = top[0], two = top[1];
+    var pOne = aboveFold ? 'high' : 'lazy';
+    var pTwo = aboveFold ? 'eager' : 'lazy';
 
     // A board nobody has backed still has contenders, and their faces are the
     // whole point of the page. Show them, and say the spot is open underneath —
@@ -32,8 +40,10 @@
           '<span class="tile-meta">open</span>' +
         '</div>' +
         '<div class="tile-faces">' +
-          '<div class="one">' + G.photo(one, { caption: one.name }) + '</div>' +
-          (two ? '<div class="two">' + G.photo(two, { caption: two.name }) + '</div>' : '') +
+          '<div class="one">' + G.photo(one, { caption: one.name, size: 200,
+              sizes: TILE_ONE_SIZES, priority: pOne }) + '</div>' +
+          (two ? '<div class="two">' + G.photo(two, { caption: two.name, size: 90,
+              sizes: TILE_TWO_SIZES, priority: pTwo }) + '</div>' : '') +
         '</div>' +
         '<div class="tile-gap"><b>#1 is open</b> — $1 takes it</div>' +
       '</a>';
@@ -46,8 +56,10 @@
         '<span class="tile-meta">' + G.esc(G.ago(one.first_backed_at)) + '</span>' +
       '</div>' +
       '<div class="tile-faces">' +
-        '<div class="one">' + G.photo(one, { caption: one.name }) + '</div>' +
-        (two ? '<div class="two">' + G.photo(two, { caption: two.name }) + '</div>' : '') +
+        '<div class="one">' + G.photo(one, { caption: one.name, size: 200,
+            sizes: TILE_ONE_SIZES, priority: pOne }) + '</div>' +
+        (two ? '<div class="two">' + G.photo(two, { caption: two.name, size: 90,
+            sizes: TILE_TWO_SIZES, priority: pTwo }) + '</div>' : '') +
       '</div>' +
       '<div class="tile-row">' +
         '<span class="t1 num">' + G.money(one.total_cents) + '</span>' +
@@ -73,7 +85,8 @@
     var people = [], page = 0, PAGE = 1000;
     for (;;) {
       var chunk = await G.sb.from('people')
-        .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at')
+        .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at,' +
+                'wikimedia_thumbnail_url,wikimedia_width,image_status')
         .order('total_cents', { ascending: false })
         .order('first_backed_at', { ascending: true, nullsFirst: false })
         .range(page * PAGE, page * PAGE + PAGE - 1);
@@ -129,7 +142,8 @@
       return GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b);
     });
 
-    $('#groups').innerHTML = ordered.map(function (name) {
+    $('#groups').innerHTML = ordered.map(function (name, gi) {
+      var first = gi === 0;
       var list = groups[name].slice().sort(function (a, b) {
         return lastActivity(byCat[b.id]) - lastActivity(byCat[a.id]);
       });
@@ -138,22 +152,28 @@
         '<div class="group-head"><h2>' + G.esc(name) + '</h2>' +
           (total ? '<span class="total num">' + G.money(total) + '</span>' : '<span class="tile-meta">open</span>') +
         '</div>' +
-        '<div class="tiles">' + list.map(function (c) {
-          return tile(c, (byCat[c.id] || []).slice(0, 2));
+        '<div class="tiles">' + list.map(function (c, ci) {
+          /* Only the opening group's first few tiles are above the fold on a
+             normal screen. Marking more than that as eager would fetch a
+             hundred faces to show six. */
+          return tile(c, (byCat[c.id] || []).slice(0, 2), first && ci < 3);
         }).join('') + '</div>' +
       '</section>';
     }).join('');
 
-    /* Only now that the tiles exist can a resolved picture find its box.
-       Top two per board — the faces people actually see — and capped, because
-       a first visitor should not trigger three hundred lookups at once. Later
-       page views pick up where this left off, and each person is resolved for
-       the whole site exactly once. */
-    var faces = [];
-    Object.keys(byCat).forEach(function (k) {
-      byCat[k].slice(0, 2).forEach(function (p) { if (!p.photo_path) faces.push(p); });
-    });
-    if (faces.length) window.GBoard.fillPictures($('#groups'), faces.slice(0, 30));
+    /* Nothing is fetched or resolved here — every tile already carries its
+       thumbnail URL. This starts the observers and preloads the two faces on
+       the very first tile, which are the only images certain to be above the
+       fold on every screen size. */
+    window.GImg.activate($('#groups'));
+    var first = ordered.length ? groups[ordered[0]] : null;
+    var lead = first && first.length ? (byCat[first[0].id] || []).slice(0, 2) : [];
+    if (lead.length) {
+      window.GImg.preload(lead.map(function (p, i) {
+        return i ? { person: p, size: 90, sizes: TILE_TWO_SIZES }
+                 : { person: p, size: 200, sizes: TILE_ONE_SIZES };
+      }));
+    }
   }
 
   /* total_cents desc, then first backed, then created -- the same rule the

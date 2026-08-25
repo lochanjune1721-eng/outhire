@@ -98,123 +98,122 @@ node scripts/make-seed-sql.mjs      # regenerates sql/seed.sql
 `sql/seed.sql` is safe to re-run: existing rows keep their id, their money and
 their position, and only names and grouping are refreshed.
 
-## Photos — the site fills itself in
+## Images — resolved ahead of time, served from Wikimedia's CDN
 
-**You do not have to run anything.** When a board renders anyone still showing
-initials, the page asks `/api/photo` for them. That endpoint finds their
-Wikipedia lead image, checks the licence, copies the bytes into your Supabase
-storage and writes `photo_path` back.
+No page ever searches Wikimedia. A contender is looked up **once, ever**, and
+the answer lives in Postgres:
 
-So the lookup happens **once per person for the whole site**, not once per
-visitor. The first person to open a board pays a few hundred milliseconds; from
-then on everyone is served from your own bucket. Nothing is hotlinked.
-
-It also covers people added through the board for $1, who never existed when
-any seeding script ran — which is the real reason this belongs in the site
-rather than in a script.
-
-The image is requested from Wikipedia at 800px, so there is nothing to resize
-and no image library on the server. The deploy still has zero dependencies.
-
-Two things to expect on a healthy deploy, so neither reads as a fault:
-
-- The first load of a board **starts as initials** and fills in over ten to
-  thirty seconds. Nothing is wrong; you are watching the site do the work once.
-- `/api/photo` needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set on
-  Vercel **and a redeploy afterwards.** Environment variables are baked in at
-  build time — adding them without redeploying changes nothing.
-
-### When nothing appears
-
-Open **`https://your-domain/api/photo`** in a browser. It answers with a
-diagnosis — names, booleans and counts only, never a key value — naming the
-first thing that is wrong and what to do about it: variables not set, the
-schema not run, the anon key pasted in where the service role key belongs, the
-`photos` bucket missing, or Wikipedia refusing your deployment.
-
-The `deployment` block at the top is there for the case where the dashboard
-plainly shows the variables and the endpoint plainly cannot see them. Both can
-be true at once, and only two things cause it:
-
-- `vercel_env` is **not** `production`. Variables scoped to Production only are
-  not handed to a Preview build. Either tick Preview on each variable, or point
-  Settings → Git → Production Branch at the branch you are deploying.
-- `env_names_seen` lists a name that is *nearly* right — `SUPBASE_URL` for
-  `SUPABASE_URL`. A misspelling is invisible in a dashboard list and behaves
-  exactly like a variable that was never added.
-
-`commit` tells you whether the build answering you is the one you just pushed,
-which saves diagnosing a fix that is not deployed yet.
-
-If that page says everything checks out but boards still show initials, open a
-board with the browser console visible. A site-wide cause prints once there. A
-person Wikipedia simply has no photo for stays quiet, because that is ordinary
-rather than a fault.
-
-### Warming it up in bulk (optional)
-
-If you would rather not have the first visitors do the work, the same job runs
-offline across all 2,926 at once:
-
-```bash
-node scripts/fetch-photos.js --check          # what resolves; writes nothing
-npm install sharp
-TMDB_API_KEY=… node scripts/fetch-photos.js --tmdb
+```
+contender -> resolver -> Wikimedia Commons -> Supabase row
+                                                   |
+                              browser <-- thumbnail URL --> Wikimedia CDN
 ```
 
-This does two things the live endpoint does not: it can use TMDB for the screen
-boards, and it crops to a true 800×800 square with `sharp` rather than taking
-Wikipedia's aspect ratio. Both are improvements, neither is required.
+The browser receives `wikimedia_thumbnail_url` with the rest of the row and
+hands it straight to `upload.wikimedia.org`. There is no image API call during
+rendering, and nothing on the critical path waits for a search.
 
-### Where the images come from
+### Where it lives
 
-Four resolvers, in order, each only handling what the previous one missed:
+| Piece | File |
+|---|---|
+| Resolver — the only code that talks to Wikimedia | `api/_wikimedia.js` |
+| Bulk pass over all 2,926 | `scripts/resolve-images.mjs` |
+| One person, on demand, cache-first | `api/photo.js` |
+| The frontend component every image goes through | `js/img.js` (`window.GImg`) |
+| Columns | `sql/image-columns.sql` (existing DB) / `sql/schema.sql` (fresh) |
+| Performance test page | `/image-test.html` |
 
-1. **TMDB** (`--tmdb`, needs `TMDB_API_KEY`) for the thirteen screen boards —
-   actors, directors, films, TV, anime, 260 names. Commons is thin and
-   inconsistent here: group shots, premieres, the occasional statue. TMDB has
-   proper portraits and posters. On a test board this took coverage from 90% to
-   95%, and the images are far better than the percentage suggests.
-2. **Wikipedia `pageimages`**, batched 50 titles per request — the article's
-   lead image, which is usually the best portrait available.
-3. **Wikipedia REST summary** (`/api/rest_v1/page/summary/…`) for stragglers.
-   One call, no key, and it resolves awkward titles more forgivingly than the
-   query API.
-4. **Wikipedia search** for whatever is still missing.
+### Running the bulk pass
 
-Two things make this survivable across 2,926 names: lookups are **batched**, so
-a full pass is roughly 700 API calls rather than ~5,900; and it **resumes** —
-anyone who already has a photo is skipped, so an interrupted run costs nothing.
+```bash
+node scripts/resolve-images.mjs --dry-run --limit=20 --verbose   # look first
+node scripts/resolve-images.mjs                                  # all of them
+```
 
-### Licensing
+Eight concurrent lookups with a second between batches — about five requests a
+second, which is well inside what Wikimedia asks of bulk clients, and finishes
+2,926 in roughly 25 minutes. `--batch` above 16 is refused.
 
-Commons images are checked before anything is stored. Commons mixes freely
-reusable files with fair-use ones, and a fair-use portrait on a site where
-people spend money is a real problem, not a cosmetic one. Anything unverifiable
-is skipped and that person keeps their initials. The artist and licence are
-stored with every photo and rendered on the person page.
+It is resumable: interrupt it, run it again, and it picks up whatever is still
+outstanding, because the progress is in the database rather than in memory.
+Retries are exponential (2s, 4s, 8s) and only for things retrying can fix — a
+429 or a 5xx, never a 404. A name that appears on two boards is resolved once
+and written to both rows.
 
-**TMDB is a different licensing situation and worth a decision, not a shrug.**
-Its images are studio and agency copyright served under TMDB's terms, not
-CC-BY-SA, so they bypass the Commons licence gate and are credited to TMDB.
-That is how most apps use TMDB, but this site takes money, so satisfy yourself
-that it is acceptable for your use before turning `--tmdb` on.
+### How a match is verified
 
-### Expect to finish it by hand
+The bar is **correct over fast**. A name alone is not a query: there are four
+Michael Jordans with articles and one of them played basketball.
 
-Realistically you get partial coverage, and some of what lands will be group
-shots or poor crops. Every miss goes to `photo-misses.json` with its reason.
-Budget an evening in `/admin.html` swapping the bad ones — that is the
-difference between looking made and looking scraped.
+1. The board's group supplies context — `Basketball` searches
+   "Michael Jordan basketball", `Football` searches "Michael Jordan footballer",
+   and boards about clubs, films, cars or characters add their own qualifier.
+2. A disambiguation page is rejected outright; it has no subject and therefore
+   no correct photo.
+3. The article has to be about *this* person: the title must carry the name,
+   and the opening paragraph must mention the field the board is about.
+4. The licence must be reusable. CC0, CC BY, CC BY-SA, public domain, GFDL.
+   Fair use is skipped, and recorded as skipped.
 
-A sport-specific API would do for footballers what TMDB does for actors. I have
-not built one: the free tiers mostly omit images, and their licensing is less
-clear than either Commons or TMDB, so it needs a look at actual terms rather
-than a guess. The resolver chain is a list — adding one is a single function.
+Anything short of that is stored as **`needs_review`** and **not shown**.
+Attaching a maybe-wrong face to a real person is worse than showing initials.
+Uncertain matches are listed in `image-review.json` and reviewable in
+`/admin.html`, where each one shows the candidate at 120px with "Use this",
+"Wrong — drop it", and "Look again".
 
-**`sharp` is deliberately not a dependency.** The deployed site has none at all
-— the serverless functions use `fetch` and `node:crypto` only — so install it ad
-hoc for the photo run and leave the deploy clean.
+### Thumbnail sizes
+
+`wikimedia_thumbnail_url` is stored at 320px via imageinfo's `iiurlwidth`. The
+original is never used and never stored as a display URL — a 4000px press photo
+behind a 64px avatar is the problem this exists to avoid.
+
+Wikimedia thumbnail URLs carry their width in the filename
+(`.../320px-Name.jpg`), so `js/img.js` derives 160/240/320/480/640 from the one
+stored URL for a `srcset`, with no further API call. `wikimedia_width` is the
+**original's** width and caps that ladder: Wikimedia's thumbnailer answers 400,
+not 404, when asked for more pixels than the source has.
+
+### What loads first
+
+| | |
+|---|---|
+| Ranks 1-2 | `loading="eager"`, `fetchpriority="high"`, and preloaded |
+| Ranks 3-8 | `loading="eager"`, ordinary priority |
+| Everything else | no `src` at all until an IntersectionObserver with `rootMargin: 800px` reaches it |
+
+A below-fold image is rendered with `data-src` rather than `src`, so nothing is
+fetched regardless of what a browser's own lazy heuristic decides. A fifty-row
+board therefore opens by fetching eight images, not fifty.
+
+Every image carries `width`, `height` and `decoding="async"`, and `.ph` has
+`aspect-ratio: 1/1` in CSS, so a card never moves when a picture arrives.
+
+Only two preloads, and they carry `imagesrcset`/`imagesizes` matching the
+element's — a preload naming a different width than the `srcset` will pick
+fetches the image twice. Measured: 8 requests on load, 20 after scrolling, no
+duplicates.
+
+> On a client-rendered page the preload is marginal: the `<link>` and the
+> `<img>` are discovered in the same tick, so it mostly documents intent. It is
+> there because it costs nothing once the candidates match, not because it is
+> load-bearing.
+
+### Missing and failed
+
+`missing` renders initials in gold and requests nothing, ever. There is no
+retry on page load — a name that has failed three times is settled, and
+`/api/photo` returns the stored verdict without contacting Wikimedia. Coverage
+of roughly 60-75% is the realistic outcome; the rest genuinely have no freely
+licensed photograph.
+
+### Self-hosting instead (optional)
+
+`scripts/fetch-photos.js` still copies images into the Supabase `photos`
+bucket and sets `photo_path`, which `js/img.js` prefers over the Wikimedia URL
+when present. Use it if you would rather not depend on Wikimedia's CDN at
+render time; it also reaches TMDB for actors and directors, which Commons
+covers poorly.
 
 ## One thing I could not verify
 

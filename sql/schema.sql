@@ -81,6 +81,22 @@ create table if not exists people (
   photo_path text,
   photo_credit text,
   photo_license text,
+  -- Resolved Wikimedia image. Filled in ahead of time by scripts/resolve-images.mjs
+  -- or api/photo.js; never looked up while a page renders. See sql/image-columns.sql,
+  -- which adds these to a database that already exists.
+  wikimedia_file_title text,
+  wikimedia_page_url text,
+  wikimedia_original_url text,
+  wikimedia_thumbnail_url text,
+  wikimedia_width int,
+  wikimedia_height int,
+  image_license text,
+  image_author text,
+  image_status text default 'pending'
+    check (image_status in ('pending', 'verified', 'needs_review', 'missing')),
+  image_last_checked timestamptz,
+  image_note text,
+  image_attempts int default 0,
   total_cents int default 0,
   backer_count int default 0,
   first_backed_at timestamptz,
@@ -326,6 +342,8 @@ grant execute on function me(), set_profile(text, boolean), place_bid(uuid, int)
 -- ===========================================================================
 -- 4. ROW LEVEL SECURITY — no public writes anywhere
 -- ===========================================================================
+
+create index if not exists people_image_status_idx on people (image_status);
 
 alter table categories  enable row level security;
 alter table people      enable row level security;

@@ -1,163 +1,106 @@
-/* POST /api/photo — resolve one person's picture, once, for everyone.
+/* POST /api/photo — resolve one contender's image and remember the answer.
  *
- * The site calls this for anyone still showing initials. It finds their
- * Wikipedia lead image, checks the licence, copies the bytes into Supabase
- * storage and writes photo_path back — so the next visitor, and every visitor
- * after, is served from your own bucket. Nothing is hotlinked and nobody has
- * to run a script.
+ * This is NOT what the site calls while rendering. Pages read
+ * wikimedia_thumbnail_url out of Postgres and hand it to Wikimedia's CDN; no
+ * page load reaches this endpoint. It exists for the two cases the bulk pass
+ * cannot cover:
  *
- * It also covers people added through the board for $1, who never existed when
- * any seeding script ran.
+ *   - somebody added through a board for $1, who no script has ever seen
+ *   - a re-check of one person, on request, from /admin.html
  *
- * The image is requested from Wikipedia at 800px, so there is nothing to
- * resize and no image library on the server.
+ * The database is consulted first every time. A row that is already verified
+ * is returned as-is and Wikimedia is not contacted at all.
+ *
+ *   GET  /api/photo                      a diagnosis of this deployment
+ *   GET  /api/photo?slug=…               run the real resolve and show every stage
+ *   POST /api/photo {slug}               resolve, cache, return
+ *   POST /api/photo {slug, force:true}   re-check one that already has an answer
  */
-import { webHandler, json, bad, readJson, db, env, sbFetch } from './_lib.js';
+import { webHandler, json, bad, readJson, db, sbFetch } from './_lib.js';
+import { resolveImage, imageRow, BASE_THUMB_WIDTH, UA } from './_wikimedia.js';
 
-/* Wikimedia's UA policy asks for a real site and a way to reach a human, and
-   their edge blocks generic or fictional agents coming from cloud IPs — which
-   is exactly what a Vercel function is. Vercel sets the domain variables
-   itself, so the default is honest without any configuration; set WIKI_CONTACT
-   to an email you read, or WIKI_UA to override the whole string. */
-const SITE = process.env.WIKI_SITE ||
-  process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || '';
-const CONTACT = process.env.WIKI_CONTACT || '';
-const UA = process.env.WIKI_UA || ('GOATdotLOL/1.0 (' +
-  ([SITE ? 'https://' + SITE.replace(/^https?:\/\//, '') : 'https://github.com/lochanjune1721-eng/outhire',
-    CONTACT].filter(Boolean).join('; ')) + ')');
-const REST = process.env.WIKI_REST || 'https://en.wikipedia.org/api/rest_v1';
-const COMMONS = process.env.COMMONS_API || 'https://commons.wikimedia.org/w/api.php';
-// en.wikipedia's own api.php answers for files hosted locally there as well as
-// for Commons files, so it is the right second place to ask.
-const WIKI_API = process.env.WIKI_API || 'https://en.wikipedia.org/w/api.php';
+const PICK = 'id,slug,name,wikipedia_url,photo_path,wikimedia_thumbnail_url,' +
+             'wikimedia_file_title,wikimedia_page_url,wikimedia_original_url,' +
+             'wikimedia_width,wikimedia_height,image_license,image_author,' +
+             'image_status,image_note,image_attempts';
 
-/* The file name out of an image URL.
-   Wikipedia's REST summary appends UTM parameters to these URLs, and taking
-   everything after the last slash carried "?utm_source=en.wikipedia.org&..."
-   into the Commons title — which then matches nothing, for every person on the
-   site, and reported itself as an unverifiable licence. */
-function fileFromUrl(u) {
-  const path = String(u || '').split('#')[0].split('?')[0];
-  return decodeURIComponent(path.split('/').pop().replace(/^\d+px-/, ''));
-}
-
-// Freely reusable with attribution. Everything else is skipped.
-const OK_LICENCE = [
-  /^cc0/i, /^cc[ -]by([ -]sa)?([ -][\d.]+)?/i, /public domain/i, /^pd[- ]/i,
-  /^attribution$/i, /free art license/i, /^gfdl/i
-];
-const licenceOk = (s) => !!s && OK_LICENCE.some((r) => r.test(String(s).trim()));
-const strip = (h) => String(h || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-
-async function lead(name, steps) {
-  const title = encodeURIComponent(String(name).replace(/ /g, '_'));
-  const res = await fetch(`${REST}/page/summary/${title}`, {
-    headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000)
-  });
-  steps?.push({ step: 'wikipedia summary', status: res.status });
-  /* 404 means no such page — a real answer, and null is right. Anything else
-     is Wikipedia refusing us (403 on the UA, 429 rate limit, 5xx), and
-     returning null there disguises a site-wide outage as "this one person has
-     no photo", which the board deliberately does not report. Throw instead, so
-     it reaches the browser console and the diagnosis endpoint. */
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Wikipedia returned ${res.status} for ${name}`);
-  const d = await res.json();
-  const src = d?.thumbnail?.source;
-  if (!src) return null;
-  const clean = (u) => String(u || '').split('#')[0].split('?')[0];
-  const thumb = clean(src);
-  const orig = clean(d.originalimage?.source || '');
-  const width = Number(d.originalimage?.width) || 0;
-
-  /* Wikimedia's thumbnailer answers 400 — not 404 — when the width asked for
-     is larger than the source, so a flat 800px request fails outright on every
-     image narrower than that. Cap it at the original's own width.
-
-     Then keep two fallbacks in order: the full-size original, and finally the
-     thumbnail Wikipedia just handed us, which is known to work because it was
-     served a moment ago. A smaller picture beats initials. */
-  const want = width ? Math.min(800, width) : 800;
-  const urls = [];
-  for (const u of [thumb.replace(/\/\d+px-/, `/${want}px-`), orig, thumb]) {
-    if (u && !urls.includes(u)) urls.push(u);
-  }
-  return { urls, file: fileFromUrl(orig || thumb), original_width: width || null };
-}
-
-async function extmetadata(api, label, file, steps) {
-  const url = `${api}?` + new URLSearchParams({
-    action: 'query', format: 'json', titles: 'File:' + file,
-    prop: 'imageinfo', iiprop: 'extmetadata', origin: '*'
-  });
-  const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-  // Same reasoning as lead(): a refusal is not an unlicensed file.
-  if (!res.ok) throw new Error(`${label} returned ${res.status} for ${file}`);
-  const body = await res.json();
-  const page = Object.values(body?.query?.pages || {})[0];
-  const em = page?.imageinfo?.[0]?.extmetadata;
-  steps?.push({ step: label + ' licence', status: res.status, file, found: !!em });
-  return em || null;
-}
-
-async function licence(file, steps) {
-  /* Commons holds most of them, but a lead image uploaded straight to
-     en.wikipedia is never there. Asking en.wikipedia second covers both,
-     since its api.php answers for local files and Commons files alike. */
-  let em = await extmetadata(COMMONS, 'commons', file, steps);
-  if (!em) em = await extmetadata(WIKI_API, 'en.wikipedia', file, steps);
-  if (!em) return null;
+/** What a caller gets back for a person, whether cached or just resolved. */
+function payload(p, extra = {}) {
   return {
-    licence: strip(em.LicenseShortName?.value),
-    author: strip(em.Artist?.value) || 'Wikimedia Commons'
+    slug: p.slug,
+    image_status: p.image_status,
+    image_url: p.wikimedia_thumbnail_url || null,
+    width: p.wikimedia_width || null,
+    height: p.wikimedia_height || null,
+    license: p.image_license || null,
+    author: p.image_author || null,
+    file_title: p.wikimedia_file_title || null,
+    page_url: p.wikimedia_page_url || null,
+    why: p.image_note || null,
+    ...extra
   };
 }
 
-/* GET /api/photo — open this in a browser to find out why pictures are not
-   appearing. It reports booleans and counts only, never a key. */
-/* Which deployment is answering. Without this, "the variables are set" and
-   "the endpoint cannot see them" are both true and there is no way to tell why
-   — a Preview build does not receive Production-scoped variables, and a stale
-   build does not receive anything added since it was built. Names and refs
-   only; no value from process.env is ever read into this response. */
+/* Give up on a name after enough tries. Without this, ten thousand page views
+   of a person with no free photo means ten thousand searches for one. */
+const MAX_ATTEMPTS = 3;
+
+async function resolveAndStore(person, steps) {
+  const result = await resolveImage({
+    name: person.name,
+    board: person.categories?.name,
+    group: person.categories?.group_name,
+    wikipedia_url: person.wikipedia_url
+  }, steps);
+
+  const row = { ...imageRow(result), image_attempts: (person.image_attempts || 0) + 1 };
+  try {
+    await db.update('people', db.eq('id', person.id), row);
+  } catch (e) {
+    /* The lookup worked; only the write failed. Return the answer anyway —
+       the caller can still show it — but say so, because otherwise every
+       later visitor repeats a search that already succeeded. */
+    console.error('[photo] resolved %s but could not save:', person.slug, e);
+    return payload({ ...person, ...row },
+      { why: 'resolved but could not save: ' + (e?.message || String(e)) });
+  }
+  return payload({ ...person, ...row });
+}
+
+/* ---------------------------------------------------------------------------
+   DIAGNOSIS — open /api/photo in a browser to find out why images are missing.
+   Names, booleans and counts only, never a key value.
+   --------------------------------------------------------------------------- */
+
 function deployment() {
   const d = {
     vercel_env: process.env.VERCEL_ENV || '(not on Vercel)',
     git_branch: process.env.VERCEL_GIT_COMMIT_REF || '(unknown)',
     commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || '(unknown)'
   };
-  /* Settles the other silent cause: a variable named almost correctly. A
-     misspelling is invisible in a dashboard list and reads exactly like a
-     variable that was never added. */
+  /* A name saved with no value is in process.env but reads as falsy, so a
+     plain name list says "present" about a variable that is doing nothing. */
   d.env_names_seen = Object.keys(process.env)
     .filter((n) => /SUP|BASE|SERVICE_ROLE|ANON/i.test(n)).sort()
-    // A name saved with no value is in process.env but reads as falsy, so a
-    // plain name list says "present" about a variable that is doing nothing.
     .map((n) => (process.env[n] ? n : n + ' (present but EMPTY)'));
   return d;
 }
 
 /* What kind of key this is, without revealing it. A Supabase key carries its
    own role, so "you pasted the anon key" is knowable here rather than guessed
-   from a 401 three calls later. Only the role claim is reported; it is not a
-   secret and cannot be used for anything. */
+   from a 401 three calls later. */
 function keyShape(k) {
   if (typeof k !== 'string' || k === '') return 'EMPTY — the variable exists but has no value';
   if (k.startsWith('sb_secret_')) return 'service_role (new sb_secret_ format)';
-  if (k.startsWith('sb_publishable_')) {
-    return 'PUBLISHABLE — this is the browser key, not the service role key';
-  }
+  if (k.startsWith('sb_publishable_')) return 'PUBLISHABLE — this is the browser key, not the service role key';
   const parts = k.split('.');
   if (parts.length !== 3) return 'unrecognised — not a JWT and not an sb_ key';
   try {
     const claims = JSON.parse(
       Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
     const role = claims.role || '(no role claim)';
-    const expired = claims.exp && claims.exp * 1000 < Date.now() ? ' — EXPIRED' : '';
-    return role + expired;
-  } catch {
-    return 'unrecognised — the JWT payload will not decode';
-  }
+    return role + (claims.exp && claims.exp * 1000 < Date.now() ? ' — EXPIRED' : '');
+  } catch { return 'unrecognised — the JWT payload will not decode'; }
 }
 
 async function diagnose() {
@@ -167,7 +110,6 @@ async function diagnose() {
 
   out.checks.SUPABASE_URL_set = !!url;
   out.checks.SUPABASE_SERVICE_ROLE_KEY_set = !!key;
-  // Only the kind of key, never the key.
   if ('SUPABASE_SERVICE_ROLE_KEY' in process.env) out.checks.service_key_looks_like = keyShape(key);
 
   if (!url || !key) {
@@ -179,15 +121,13 @@ async function diagnose() {
     const absent = missing.filter((n) => !(n in process.env));
     const preview = out.deployment.vercel_env && out.deployment.vercel_env !== 'production';
     const parts = [];
-
     if (empty.length) {
       parts.push(empty.join(' and ') + ' ' + (empty.length > 1 ? 'exist' : 'exists') +
         ' on this deployment but ' + (empty.length > 1 ? 'their values are' : 'its value is') +
         ' empty — saved as a name with nothing in it. In Vercel -> Settings -> Environment ' +
-        'Variables, delete ' + empty.join(' and ') + ' and add ' +
-        (empty.length > 1 ? 'them' : 'it') + ' again, pasting the value this time. A Secret ' +
-        'variable cannot be read back after saving, so an empty one looks exactly like a full ' +
-        'one in the list. Then Deployments -> ... -> Redeploy.');
+        'Variables, delete ' + empty.join(' and ') + ' and add ' + (empty.length > 1 ? 'them' : 'it') +
+        ' again, pasting the value this time. A Secret variable cannot be read back after ' +
+        'saving, so an empty one looks exactly like a full one in the list. Then redeploy.');
     }
     if (absent.length) {
       parts.push(absent.join(' and ') + ' ' + (absent.length > 1 ? 'are' : 'is') +
@@ -224,167 +164,112 @@ async function diagnose() {
     return out;
   }
 
+  /* The image columns are the whole architecture. If they are missing, the
+     site has nothing to render and the resolver has nowhere to write. */
   try {
-    const total = await sbFetch('/rest/v1/people?select=id&limit=1', { headers: { Prefer: 'count=exact' } });
-    out.checks.people_rows = Array.isArray(total) ? 'present' : 'unknown';
-  } catch { /* count is a nicety */ }
+    await db.select('people', 'select=image_status,wikimedia_thumbnail_url&limit=1');
+    out.checks.image_columns_present = true;
+  } catch (e) {
+    out.checks.image_columns_present = false;
+    out.next = 'The image columns are missing: ' + e.message +
+               '. Run sql/image-columns.sql in the Supabase SQL editor.';
+    return out;
+  }
+
+  // How far the bulk pass has got. This is the number you actually want.
+  for (const s of ['verified', 'needs_review', 'missing', 'pending']) {
+    try {
+      const rows = await db.select('people', `select=id&image_status=eq.${s}&limit=1000`);
+      out.checks[`people_${s}`] = Array.isArray(rows) ? rows.length : 'unknown';
+    } catch { out.checks[`people_${s}`] = 'unknown'; }
+  }
 
   try {
-    const withPhoto = await db.select('people', 'select=slug&photo_path=not.is.null&limit=1000');
-    out.checks.people_with_photo = Array.isArray(withPhoto) ? withPhoto.length : 0;
-  } catch { out.checks.people_with_photo = 'unknown'; }
-
-  try {
-    const r = await fetch(`${REST}/page/summary/Lionel_Messi`, {
+    const r = await fetch('https://en.wikipedia.org/w/api.php?action=query&format=json&meta=siteinfo', {
       headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000)
     });
-    out.checks.wikipedia_reachable = r.ok;
-    if (!r.ok) out.next = `Wikipedia returned ${r.status} from your deployment.`;
+    out.checks.wikimedia_reachable = r.ok;
+    if (!r.ok) out.next = `Wikimedia returned ${r.status} from your deployment.`;
   } catch (e) {
-    out.checks.wikipedia_reachable = false;
-    out.next = 'Your deployment cannot reach Wikipedia: ' + e.message;
+    out.checks.wikimedia_reachable = false;
+    out.next = 'Your deployment cannot reach Wikimedia: ' + e.message;
   }
 
-  try {
-    const b = await sbFetch('/storage/v1/bucket/photos');
-    out.checks.photos_bucket = !!b;
-  } catch (e) {
-    out.checks.photos_bucket = false;
-    out.checks.photos_bucket_error = e && e.message ? e.message : String(e);
-    /* A 401/403 here is not a missing bucket — it is the anon key pasted into
-       SUPABASE_SERVICE_ROLE_KEY. Both look identical from the outside, and
-       sending someone to re-run the schema when their key is wrong wastes an
-       afternoon. */
-    out.next = out.next || (e && (e.status === 401 || e.status === 403)
-      ? 'Supabase refused this key (' + e.status + '). SUPABASE_SERVICE_ROLE_KEY is set but is not ' +
-        'the service role key — the anon key looks the same and is the usual mistake. ' +
-        'Supabase -> Project Settings -> API -> service_role, then redeploy.'
-      : 'The photos storage bucket is missing. Run sql/schema.sql.');
-  }
-
-  out.ok = Object.values(out.checks).every((v) => v !== false) && !out.checks.photos_bucket_error;
+  out.checks.user_agent_sent = UA;
+  out.ok = Object.values(out.checks).every((v) => v !== false);
   if (out.ok && !out.next) {
-    out.next = 'Everything checks out. Open a board and the pictures will fill in. ' +
-               'POST {"slug":"lionel-messi"} here to resolve one by hand.';
+    out.next = out.checks.people_verified === 0
+      ? 'Everything works, but nothing has been resolved yet. Run: node scripts/resolve-images.mjs'
+      : 'Everything checks out. GET /api/photo?slug=lionel-messi to trace one resolve.';
   }
   return out;
 }
 
-/* The whole resolve, with a running account of what each stage returned.
-   POST throws the account away; GET /api/photo?slug=... returns it, because
-   three of these stages are invisible to the plain diagnosis and two of them
-   fail with reasons the board is right to keep quiet about per person and
-   wrong to keep quiet about for everyone. */
-async function resolve(slug, steps) {
-  const person = await db.one('people', db.eq('slug', slug));
-  steps.push({ step: 'find person', found: !!person, name: person?.name });
-  if (!person) return { status: 404, body: { error: 'No such person.' } };
-  if (person.photo_path) return { body: { photo_path: person.photo_path, cached: true } };
+/* --------------------------------- routes -------------------------------- */
 
-  const hit = await lead(person.name, steps);
-  steps.push({ step: 'lead image', found: !!hit, file: hit?.file,
-               original_width: hit?.original_width, candidates: hit?.urls });
-  if (!hit) return { body: { photo_path: null, why: 'no image found' } };
-
-  const meta = await licence(hit.file, steps);
-  const ok = meta && licenceOk(meta.licence);
-  steps.push({ step: 'licence check', licence: meta?.licence || null, acceptable: !!ok });
-  if (!ok) return { body: { photo_path: null, why: `licence not verifiable (${meta?.licence || 'unknown'})` } };
-
-  const MAX = 5 * 1024 * 1024;
-  let img = null, bytes = null, lastStatus = 0;
-  for (const url of hit.urls) {
-    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
-    lastStatus = r.status;
-    const declared = Number(r.headers.get('content-length')) || 0;
-    if (!r.ok || declared > MAX) {
-      steps.push({ step: 'download image', status: r.status, url, too_large: declared > MAX || undefined });
-      continue;                       // try the next candidate rather than give up
-    }
-    const buf = Buffer.from(await r.arrayBuffer());
-    steps.push({ step: 'download image', status: r.status, url, bytes: buf.length });
-    if (buf.length > MAX) continue;   // no content-length header; found out the hard way
-    img = r; bytes = buf; break;
-  }
-  if (!img) {
-    return { body: { photo_path: null,
-      why: `download failed (${lastStatus}) after trying ${hit.urls.length} URL(s)` } };
-  }
-
-  const type = img.headers.get('content-type') || 'image/jpeg';
-  const ext = /png/.test(type) ? 'png' : /webp/.test(type) ? 'webp' : 'jpg';
-  const path = `people/${person.slug}.${ext}`;
-
-  const up = await fetch(`${env('SUPABASE_URL').replace(/\/$/, '')}/storage/v1/object/photos/${path}`, {
-    method: 'POST',
-    headers: {
-      apikey: env('SUPABASE_SERVICE_ROLE_KEY'),
-      Authorization: `Bearer ${env('SUPABASE_SERVICE_ROLE_KEY')}`,
-      'Content-Type': type, 'x-upsert': 'true'
-    },
-    body: bytes
-  });
-  /* Supabase says why in the body — "Bucket not found", "new row violates
-     row-level security policy". A bare status number sent you guessing. */
-  const upBody = up.ok ? null : (await up.text().catch(() => '')).slice(0, 300);
-  steps.push({ step: 'upload to storage', status: up.status, path, response: upBody });
-  if (!up.ok) return { body: { photo_path: null, why: `upload failed (${up.status}) ${upBody}`.trim() } };
-
-  try {
-    await db.update('people', db.eq('id', person.id), {
-      photo_path: path, photo_credit: meta.author, photo_license: meta.licence
-    });
-    steps.push({ step: 'save photo_path to row', ok: true });
-  } catch (e) {
-    /* The bytes are in the bucket now. If the row cannot be updated, the file
-       is still good and the caller should still show it — but every later
-       visitor would re-download it forever, so say so out loud. */
-    console.error('[photo] stored %s but could not write photo_path:', path, e);
-    steps.push({ step: 'save photo_path to row', ok: false, error: e?.message });
-    return { body: {
-      photo_path: path, credit: meta.author, license: meta.licence,
-      why: 'stored the image but could not save it to the row: ' + (e?.message || String(e))
-    } };
-  }
-
-  return { body: { photo_path: path, credit: meta.author, license: meta.licence } };
+async function load(slug) {
+  const cols = PICK + ',categories(slug,name,group_name)';
+  const rows = await db.select('people',
+    `slug=eq.${encodeURIComponent(slug)}&select=${encodeURIComponent(cols)}&limit=1`);
+  return rows?.[0] || null;
 }
 
 export default webHandler(async function handler(request) {
   if (request.method === 'GET') {
-    /* One URL you can paste into the address bar that runs the real thing.
-       A POST-only trace is no use to someone holding a browser. */
     const slug = new URL(request.url).searchParams.get('slug');
     if (!slug) return json(await diagnose());
+    /* One URL you can paste into the address bar that runs the real thing.
+       A POST-only trace is no use to someone holding a browser. */
     const steps = [];
     try {
-      const r = await resolve(slug, steps);
-      return json({ trace: true, user_agent_sent: UA, steps, result: r.body }, r.status || 200);
+      const person = await load(slug);
+      if (!person) return json({ trace: true, steps, result: { error: 'No such person.' } }, 404);
+      steps.push({ step: 'database', image_status: person.image_status,
+                   already_have: !!person.wikimedia_thumbnail_url, attempts: person.image_attempts });
+      const result = await resolveAndStore(person, steps);
+      return json({ trace: true, user_agent_sent: UA, base_thumb_width: BASE_THUMB_WIDTH, steps, result });
     } catch (e) {
       return json({ trace: true, user_agent_sent: UA, steps,
-                    result: { photo_path: null, why: 'lookup failed: ' + (e?.message || String(e)) } });
+                    result: { image_url: null, why: 'lookup failed: ' + (e?.message || String(e)) } });
     }
   }
   if (request.method !== 'POST') return bad('Use POST, or GET for a diagnosis.', 405);
 
-  // Fail loudly rather than returning a silent null nobody can debug.
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return json({
-      photo_path: null,
+      image_url: null,
       why: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not visible to this ' +
            (process.env.VERCEL_ENV || 'local') + ' deployment (' +
            (process.env.VERCEL_GIT_COMMIT_REF || 'unknown branch') +
            '). Open /api/photo in a browser for the full diagnosis.'
     }, 500);
   }
+
   try {
-    const { slug } = await readJson(request);
+    const { slug, force } = await readJson(request);
     if (!slug || typeof slug !== 'string' || slug.length > 80) return bad('No person named.');
-    const r = await resolve(slug, []);
-    if (r.status) return json(r.body, r.status);
-    return json(r.body);
+
+    const person = await load(slug);
+    if (!person) return bad('No such person.', 404);
+
+    /* CHECK THE DATABASE FIRST. This is the rule the whole design rests on:
+       a contender is looked up on Wikimedia once, ever, and every later
+       request is answered out of Postgres. */
+    if (!force) {
+      if (person.wikimedia_thumbnail_url && person.image_status === 'verified') {
+        return json(payload(person, { cached: true }));
+      }
+      // A settled answer is still an answer — including an uncertain match a
+      // human has yet to look at, and a name we have already failed on enough.
+      if (person.image_status === 'needs_review') return json(payload(person, { cached: true }));
+      if (person.image_status === 'missing' && (person.image_attempts || 0) >= MAX_ATTEMPTS) {
+        return json(payload(person, { cached: true }));
+      }
+    }
+
+    return json(await resolveAndStore(person, []));
   } catch (e) {
     console.error('[photo]', e);
-    return json({ photo_path: null, why: 'lookup failed: ' + (e && e.message ? e.message : String(e)) });
+    return json({ image_url: null, why: 'lookup failed: ' + (e?.message || String(e)) });
   }
 });
