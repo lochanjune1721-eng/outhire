@@ -83,6 +83,20 @@ const release = (note) => sbFetch('/rest/v1/image_job?id=eq.1', {
   body: JSON.stringify({ running: false, last_beat: new Date().toISOString(), note: note || null })
 }).catch(() => {});
 
+/* One lane failing is not the run failing. All eight share this lock row, so
+   clearing `running` here turns every sibling's next handoff into a stale
+   token and abandons seven eighths of the table thirty seconds later. Record
+   why this lane stopped and leave the flag alone; the last lane out releases
+   it at the finish, and if every lane dies the stale heartbeat in takeLock()
+   frees it within STALE_MS — which is exactly what that clause is for.
+
+   Deliberately does not touch last_beat: the staleness clock has to keep
+   running from the last batch that actually did something. */
+const stopLane = (note) => sbFetch('/rest/v1/image_job?id=eq.1', {
+  method: 'PATCH', headers: { Prefer: 'return=minimal' },
+  body: JSON.stringify({ note: note || null })
+}).catch(() => {});
+
 /* ------------------------------ the handoff ------------------------------ */
 
 function selfUrl() {
@@ -178,6 +192,16 @@ async function cacheOne(p) {
   return { photo_path: file, photo_note: null, photo_attempts: (p.photo_attempts || 0) + 1 };
 }
 
+/* upsertMany is INSERT ... ON CONFLICT, so a person deleted between the SELECT
+   and this write is recreated as a slugless ghost — invisible to every lane's
+   slug range, yet still counted by `outstanding`, so the run can never report
+   finished. Nothing legitimate has a null slug: seed.sql, add_person() and the
+   admin all set one. */
+async function writeBatch(rows) {
+  await db.upsertMany('people', rows);
+  await db.del('people', 'slug=is.null').catch(() => {});
+}
+
 async function cacheBatch(lane) {
   const rows = await db.select('people',
     `${CACHE_FILTER}${laneFilter(lane)}&select=` +
@@ -195,13 +219,25 @@ async function cacheBatch(lane) {
         /* Count the attempt so a file that will never download stops being
            retried, and keep the reason where the admin page can show it. The
            Wikimedia URL still works, so the site loses nothing meanwhile. */
-        bad.push({ id: p.id, photo_attempts: (p.photo_attempts || 0) + 1,
+        /* Only count an attempt against something a retry cannot fix. A CDN
+           timeout or a 429 is the network having a bad thirty seconds, and
+           spending one of three lives on it retires a person permanently for
+           no reason. */
+        const transient = /\b(429|5\d\d)\b|timeout|timed out|aborted|fetch failed/i.test(e.message);
+        bad.push({ id: p.id,
+                   photo_attempts: (p.photo_attempts || 0) + (transient ? 0 : 1),
                    photo_note: String(e.message).slice(0, 300) });
       }
     }));
     await beat(ok.length);
   }
-  if (ok.length || bad.length) await db.upsertMany('people', ok.concat(bad)).catch(() => {});
+  /* Two requests, not one concatenated array: PostgREST requires every object
+     in a bulk payload to carry the same keys, and a mixed batch of successes
+     and failures has two different shapes. Concatenating them made the whole
+     write 400 — silently, so the same forty people were re-downloaded from
+     Wikimedia on every pass and photo_attempts never rose to retire them. */
+  if (ok.length) await writeBatch(ok);
+  if (bad.length) await writeBatch(bad);
   return { done: ok.length, failed: bad.length, lastError, empty: false };
 }
 
@@ -228,14 +264,20 @@ async function runBatch(lane) {
   const patch = rows.map((p, i) => ({
     id: p.id, ...imageRow(results[i]), image_attempts: (p.image_attempts || 0) + 1
   }));
-  await db.upsertMany('people', patch);
+  await writeBatch(patch);
   await beat(patch.length);
 
   return { done: patch.length, failed: 0, empty: false };
 }
 
 export default webHandler(async function handler(request) {
-  if (request.method === 'GET') {
+  /* Vercel cron jobs arrive as GET and the method is not configurable, so the
+     nightly tick was landing in the status branch and starting nothing at all.
+     It has to be header-gated rather than "any GET starts a run": the admin
+     page polls this endpoint every four seconds. */
+  const isCron = request.method === 'GET' && !!request.headers.get('x-vercel-cron');
+
+  if (request.method === 'GET' && !isCron) {
     // Looking, not starting. Safe for anything to poll.
     try {
       const p = await progress();
@@ -252,7 +294,7 @@ export default webHandler(async function handler(request) {
                            'sql/image-columns.sql in the Supabase SQL editor. (' + e.message + ')' }, 400);
     }
   }
-  if (request.method !== 'POST') return json({ error: 'Use POST.' }, 405);
+  if (request.method !== 'POST' && !isCron) return json({ error: 'Use POST.' }, 405);
 
   let depth = 0, token = null, lane = null, force = false;
   try {
@@ -325,7 +367,7 @@ export default webHandler(async function handler(request) {
        reason where the admin page can show it, rather than grinding through
        2,900 names against a wall. */
     if (batch.done === 0 && batch.failed > 0) {
-      await release('stopped in ' + batch.phase + ': ' + batch.lastError);
+      await stopLane('lane ' + lane + ' stopped in ' + batch.phase + ': ' + batch.lastError);
       return json({ started: true, lane, phase: batch.phase, stopped: batch.lastError, progress: p });
     }
     if (depth >= MAX_CHAIN) {
@@ -334,14 +376,14 @@ export default webHandler(async function handler(request) {
 
     const chained = await handOff(depth, lock.started_at, lane);
     if (!chained.ok) {
-      await release('could not hand off: ' + chained.why);
+      await stopLane('lane ' + lane + ' could not hand off: ' + chained.why);
       return json({ started: true, lane, phase: batch.phase, resolved: batch.done,
                     failed: batch.failed, chained: false, stopped: chained.why, progress: p });
     }
     return json({ started: true, lane, phase: batch.phase, resolved: batch.done,
                   failed: batch.failed, chained: true, progress: p });
   } catch (e) {
-    await release('error: ' + (e?.message || String(e)));
+    await stopLane('lane ' + lane + ' error: ' + (e?.message || String(e)));
     return json({ started: true, lane, error: e?.message || String(e) }, 500);
   }
 });

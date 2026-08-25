@@ -50,6 +50,9 @@ export default webHandler(async function handler(request) {
         // Rejecting a face means dropping it, not leaving it where a later
         // approval could attach it by accident.
         patch.image_note = 'rejected by hand';
+        // The self-hosted copy IS the rejected face. Leaving it behind means
+        // the site keeps showing the picture you just said was wrong.
+        patch.photo_path = null;
         patch.wikimedia_thumbnail_url = null;
         patch.wikimedia_file_title = null;
         patch.wikimedia_original_url = null;

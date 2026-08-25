@@ -36,6 +36,7 @@ drop function if exists on_click_inserted()             cascade;
 drop function if exists record_view(uuid)               cascade;
 
 -- this build
+drop table if exists image_job       cascade;
 drop table if exists fan_totals      cascade;
 drop table if exists topups          cascade;
 drop table if exists bids            cascade;
@@ -97,6 +98,8 @@ create table if not exists people (
   image_last_checked timestamptz,
   image_note text,
   image_attempts int default 0,
+  photo_attempts int default 0,
+  photo_note text,
   total_cents int default 0,
   backer_count int default 0,
   first_backed_at timestamptz,
@@ -343,7 +346,25 @@ grant execute on function me(), set_profile(text, boolean), place_bid(uuid, int)
 -- 4. ROW LEVEL SECURITY — no public writes anywhere
 -- ===========================================================================
 
+-- The resolver runs itself and needs somewhere to say "I am already running".
+-- One row. Without it a cron tick and three page loads all start at once.
+create table if not exists image_job (
+  id         int primary key default 1 check (id = 1),
+  running    boolean default false,
+  started_at timestamptz,
+  -- Touched after every batch. A run killed mid-flight cannot release
+  -- anything, so a stale heartbeat is what lets the next tick take over.
+  last_beat  timestamptz,
+  done       int default 0,
+  note       text
+);
+insert into image_job (id) values (1) on conflict (id) do nothing;
+alter table image_job enable row level security;
+-- No policy: only the service role reaches this, and it bypasses RLS.
+
 create index if not exists people_image_status_idx on people (image_status);
+create index if not exists people_to_cache_idx
+  on people (image_status) where photo_path is null;
 
 alter table categories  enable row level security;
 alter table people      enable row level security;

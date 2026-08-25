@@ -59,6 +59,16 @@ const strip = (h) => String(h || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' '
    survive .pop() straight into a Commons title, which then matches nothing. */
 const clean = (u) => String(u || '').split('#')[0].split('?')[0];
 
+/* The article title out of a wikipedia_url. decodeURIComponent throws on a
+   malformed escape — '%zz' — and one such value on one row of a $1 board add
+   would reject the whole batch of a hundred and twenty, every run, forever.
+   A title we cannot decode simply misses and falls through to the search. */
+function titleFromUrl(url) {
+  const raw = String(url || '').split('/wiki/')[1] || '';
+  try { return decodeURIComponent(raw).replace(/_/g, ' '); }
+  catch { return raw.replace(/_/g, ' '); }
+}
+
 // NFD then drop combining marks, so Pelé and Pele are the same name.
 const fold = (s) => String(s || '').normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -323,11 +333,7 @@ export async function resolveMany(people) {
 
   /* One title each to start with: whatever the seed data says, or the name.
      A given wikipedia_url is authoritative and skips a guess. */
-  const first = people.map((p) => {
-    const given = p.wikipedia_url &&
-      decodeURIComponent(String(p.wikipedia_url).split('/wiki/')[1] || '').replace(/_/g, ' ');
-    return given || p.name;
-  });
+  const first = people.map((p) => (p.wikipedia_url && titleFromUrl(p.wikipedia_url)) || p.name);
 
   let arts = await articleMany(first);
 
@@ -364,8 +370,13 @@ export async function resolveMany(people) {
   for (let i = 0; i < needSearch.length; i += 4) {
     await Promise.all(needSearch.slice(i, i + 4).map(async (idx) => {
       const p = people[idx], ctx = ctxs[idx];
-      let hits;
-      try { hits = await searchArticles(p.name, ctx); } catch { return; }
+      /* Deliberately not caught. A 429 or a UA block here is Wikimedia
+         refusing this deployment, and swallowing it turned a retryable
+         failure into a durable "no article with a lead image" written to the
+         row — the exact 2,926-way silent wrong answer the rest of this file
+         exists to prevent. Let it reach runBatch, which leaves every row in
+         the batch untouched. */
+      const hits = await searchArticles(p.name, ctx);
       const found = await articleMany(hits.slice(0, 3));
       for (const t of hits.slice(0, 3)) {
         const a = found.get(t);
@@ -485,8 +496,7 @@ export async function resolveImage(person, steps = []) {
   /* An article title we were given beats one we guessed. The seed data carries
      wikipedia_url for some people and it is authoritative. */
   const titles = [];
-  const given = person.wikipedia_url &&
-    decodeURIComponent(String(person.wikipedia_url).split('/wiki/')[1] || '').replace(/_/g, ' ');
+  const given = person.wikipedia_url && titleFromUrl(person.wikipedia_url);
   if (given) titles.push(given);
   titles.push(person.name);
 
