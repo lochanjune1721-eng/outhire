@@ -84,12 +84,13 @@
        with nothing to indicate the rest were missing. Page until exhausted. */
     var people = [], page = 0, PAGE = 1000;
     for (;;) {
-      var chunk = await G.sb.from('people')
-        .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at,' +
-                'wikimedia_thumbnail_url,wikimedia_width,image_status')
-        .order('total_cents', { ascending: false })
-        .order('first_backed_at', { ascending: true, nullsFirst: false })
-        .range(page * PAGE, page * PAGE + PAGE - 1);
+      var chunk = await G.withImageCols(function (extra) {
+        return G.sb.from('people')
+          .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at' + extra)
+          .order('total_cents', { ascending: false })
+          .order('first_backed_at', { ascending: true, nullsFirst: false })
+          .range(page * PAGE, page * PAGE + PAGE - 1);
+      });
       if (chunk.error) throw chunk.error;
       people = people.concat(chunk.data || []);
       if (!chunk.data || chunk.data.length < PAGE) break;

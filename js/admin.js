@@ -37,6 +37,9 @@
      about it. An uncertain match is shown here — larger than the site would
      ever render it — precisely so it can be looked at before it goes live. */
   function imageBlock(p) {
+    // No column, no block. Offering a verdict on a field the database does not
+    // have would just fail on click.
+    if (!('image_status' in p)) return '';
     var status = p.image_status || 'pending';
     var colour = { verified: 'var(--gold)', needs_review: '#e8a54a', missing: 'var(--muted)' }[status] || 'var(--muted)';
     var preview = p.wikimedia_thumbnail_url

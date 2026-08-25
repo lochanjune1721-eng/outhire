@@ -98,11 +98,12 @@
   async function main() {
     if (!G.sb) { $('#stats').textContent = G.offlineMessage(); return; }
 
-    var res = await G.sb.from('people')
-      .select('id,slug,name,photo_path,wikimedia_thumbnail_url,wikimedia_width,' +
-              'wikimedia_height,image_status,image_license,image_author')
-      .order('name')
-      .limit(20);
+    var res = await G.withImageCols(function (extra) {
+      return G.sb.from('people')
+        .select('id,slug,name,photo_path' + extra)
+        .order('name')
+        .limit(20);
+    });
     if (res.error) { $('#stats').textContent = G.explain(res.error); return; }
 
     var people = res.data || [];

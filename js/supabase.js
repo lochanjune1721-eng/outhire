@@ -95,13 +95,41 @@
 
   /* ------------------------------ queries -------------------------------- */
 
+  var PCOLS = 'id,slug,category_id,name,blurb,wikipedia_url,photo_path,photo_credit,' +
+              'photo_license,total_cents,backer_count,first_backed_at,created_at';
+
   /* The image columns come down with the row. That is the architecture: the
      browser is handed a thumbnail URL it can use immediately and never asks
-     anything about images again. */
-  var PCOLS = 'id,slug,category_id,name,blurb,wikipedia_url,photo_path,photo_credit,' +
-              'photo_license,total_cents,backer_count,first_backed_at,created_at,' +
-              'wikimedia_thumbnail_url,wikimedia_width,wikimedia_height,' +
+     anything about images again.
+
+     They arrive with sql/image-columns.sql, though, and a database that has
+     not had it run yet must still render — as initials — rather than failing
+     outright. Selecting a column Postgres does not have is an error on the
+     whole query, so the first one probes and the answer is remembered for the
+     rest of the page. */
+  var ICOLS = ',wikimedia_thumbnail_url,wikimedia_width,wikimedia_height,' +
               'wikimedia_page_url,image_license,image_author,image_status';
+  var haveImageCols = true;
+
+  function missingImageCols(err) {
+    var m = [err && err.message, err && err.details, err && err.hint, err && err.code].join(' ');
+    return /wikimedia_|image_status|image_license|image_author/.test(m) &&
+           /does not exist|42703/i.test(m);
+  }
+
+  /** Run a people query with the image columns, and again without if they are
+      not there yet. `run` receives the string to append to its select list. */
+  async function withImageCols(run) {
+    var r = await run(haveImageCols ? ICOLS : '');
+    if (r && r.error && haveImageCols && missingImageCols(r.error)) {
+      haveImageCols = false;
+      console.warn('[goat] this database does not have the image columns yet, so ' +
+        'everyone is showing initials.\nRun sql/image-columns.sql in the Supabase ' +
+        'SQL editor, then: node scripts/resolve-images.mjs');
+      r = await run('');
+    }
+    return r;
+  }
 
   async function categories() {
     if (OFFLINE) return [];
@@ -120,20 +148,24 @@
   /** Ranked people. Rank is the money: total_cents desc, first_backed_at asc. */
   async function people(categoryId, limit, offset) {
     if (OFFLINE) return { rows: [], total: 0 };
-    var r = await sb.from('people').select(PCOLS, { count: 'exact' })
-      .eq('category_id', categoryId)
-      .order('total_cents', { ascending: false })
-      .order('first_backed_at', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true })
-      .range(offset || 0, (offset || 0) + (limit || 100) - 1);
+    var r = await withImageCols(function (extra) {
+      return sb.from('people').select(PCOLS + extra, { count: 'exact' })
+        .eq('category_id', categoryId)
+        .order('total_cents', { ascending: false })
+        .order('first_backed_at', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true })
+        .range(offset || 0, (offset || 0) + (limit || 100) - 1);
+    });
     if (r.error) throw r.error;
     return { rows: r.data || [], total: r.count || 0 };
   }
 
   async function person(slug) {
     if (OFFLINE) return null;
-    var r = await sb.from('people').select(PCOLS + ',categories(slug,name,group_name)')
-      .eq('slug', slug).maybeSingle();
+    var r = await withImageCols(function (extra) {
+      return sb.from('people').select(PCOLS + extra + ',categories(slug,name,group_name)')
+        .eq('slug', slug).maybeSingle();
+    });
     if (r.error) throw r.error;
     return r.data || null;
   }
@@ -188,9 +220,11 @@
 
   async function search(term) {
     if (OFFLINE || !term || term.length < 2) return [];
-    var r = await sb.from('people').select('slug,name,photo_path,wikimedia_thumbnail_url,wikimedia_width,image_status,total_cents,categories(name)')
-      .ilike('name', '%' + term + '%')
-      .order('total_cents', { ascending: false }).limit(8);
+    var r = await withImageCols(function (extra) {
+      return sb.from('people').select('slug,name,photo_path,total_cents,categories(name)' + extra)
+        .ilike('name', '%' + term + '%')
+        .order('total_cents', { ascending: false }).limit(8);
+    });
     return r.data || [];
   }
 
@@ -294,6 +328,20 @@
      These are the three states a fresh deploy actually lands in. */
   function explain(err) {
     var msg = (err && (err.message || err.error_description || err.error)) || String(err || '');
+    /* Order matters. PostgREST says "column ... does not exist" for a missing
+       column and "relation ... does not exist" for a missing table, and the
+       broad test below matches both — so the narrower one has to run first or
+       a pending migration reads as an empty database and sends you to rebuild
+       a schema that is already fine. */
+    if (/column .* does not exist|42703/i.test(msg)) {
+      var col = (msg.match(/column [\w.]*?\.?([\w]+) does not exist/i) || [])[1];
+      if (col && /^(wikimedia_|image_)/.test(col)) {
+        return 'This database does not have the image columns yet. Run ' +
+               'sql/image-columns.sql in the Supabase SQL editor.';
+      }
+      return 'The database is missing a column this page needs' + (col ? ' (' + col + ')' : '') +
+             '. Run sql/schema.sql and sql/image-columns.sql in the Supabase SQL editor.';
+    }
     if (/does not exist|42P01|schema cache|Could not find the table/i.test(msg)) {
       return 'The database has no tables yet. Run sql/schema.sql in the Supabase SQL editor, then seed.';
     }
@@ -407,6 +455,7 @@
     stats: stats, search: search, onBid: onBid, recordVisit: recordVisit,
     explain: explain, showError: showError, offlineMessage: offlineMessage,
     onMe: onMe, refreshMe: refreshMe, signIn: signIn, signOut: signOut, get me() { return ME; },
-    placeBid: placeBid, addPerson: addPerson, setProfile: setProfile, api: api
+    placeBid: placeBid, addPerson: addPerson, setProfile: setProfile, api: api,
+    withImageCols: withImageCols, PCOLS: PCOLS
   };
 })();
