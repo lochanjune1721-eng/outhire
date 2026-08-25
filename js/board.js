@@ -129,10 +129,17 @@
             // Only latch on a site-wide cause. A per-person "no image found"
             // is normal and must not suppress the message that matters.
             var systemic = r && r.why && !/no image found|licence not verifiable/i.test(r.why);
-            if (systemic && !fillPictures.warned) {
+            /* Suppressing "no image found" and "licence not verifiable" is
+               right for one person and wrong for everybody. If nothing at all
+               has resolved after several tries, the reason stops being about
+               these people and starts being about the deployment — so say it,
+               whatever the wording was. */
+            fillPictures.tried = (fillPictures.tried || 0) + 1;
+            if ((systemic || (fillPictures.tried >= 5 && !fillPictures.got)) && !fillPictures.warned) {
               fillPictures.warned = true;
-              console.warn('[goat] no picture for ' + p.slug + ': ' + r.why +
-                '\nOpen /api/photo in a browser for a full diagnosis.');
+              console.warn('[goat] no picture for ' + p.slug + ': ' + (r && r.why) +
+                ' (' + fillPictures.tried + ' tried, 0 resolved)' +
+                '\nOpen /api/photo?slug=' + p.slug + ' in a browser to see which stage fails.');
             }
             /* A systemic failure is not this person's answer — it is the
                deployment's. Forget we asked, so the next board that lists them
@@ -141,6 +148,7 @@
             if (systemic) delete asked[p.slug];
             continue;
           }
+          fillPictures.got = (fillPictures.got || 0) + 1;
           p.photo_path = r.photo_path;
           let sel = '[data-slug="' + (window.CSS && CSS.escape ? CSS.escape(p.slug) : p.slug) + '"]';
           // A leaderboard row wraps its .ph; a homepage tile IS the .ph.
