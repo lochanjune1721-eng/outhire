@@ -92,8 +92,34 @@ function deployment() {
      misspelling is invisible in a dashboard list and reads exactly like a
      variable that was never added. */
   d.env_names_seen = Object.keys(process.env)
-    .filter((n) => /SUP|BASE|SERVICE_ROLE|ANON/i.test(n)).sort();
+    .filter((n) => /SUP|BASE|SERVICE_ROLE|ANON/i.test(n)).sort()
+    // A name saved with no value is in process.env but reads as falsy, so a
+    // plain name list says "present" about a variable that is doing nothing.
+    .map((n) => (process.env[n] ? n : n + ' (present but EMPTY)'));
   return d;
+}
+
+/* What kind of key this is, without revealing it. A Supabase key carries its
+   own role, so "you pasted the anon key" is knowable here rather than guessed
+   from a 401 three calls later. Only the role claim is reported; it is not a
+   secret and cannot be used for anything. */
+function keyShape(k) {
+  if (typeof k !== 'string' || k === '') return 'EMPTY — the variable exists but has no value';
+  if (k.startsWith('sb_secret_')) return 'service_role (new sb_secret_ format)';
+  if (k.startsWith('sb_publishable_')) {
+    return 'PUBLISHABLE — this is the browser key, not the service role key';
+  }
+  const parts = k.split('.');
+  if (parts.length !== 3) return 'unrecognised — not a JWT and not an sb_ key';
+  try {
+    const claims = JSON.parse(
+      Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    const role = claims.role || '(no role claim)';
+    const expired = claims.exp && claims.exp * 1000 < Date.now() ? ' — EXPIRED' : '';
+    return role + expired;
+  } catch {
+    return 'unrecognised — the JWT payload will not decode';
+  }
 }
 
 async function diagnose() {
@@ -103,25 +129,50 @@ async function diagnose() {
 
   out.checks.SUPABASE_URL_set = !!url;
   out.checks.SUPABASE_SERVICE_ROLE_KEY_set = !!key;
+  // Only the kind of key, never the key.
+  if ('SUPABASE_SERVICE_ROLE_KEY' in process.env) out.checks.service_key_looks_like = keyShape(key);
+
   if (!url || !key) {
-    const named = out.deployment.env_names_seen;
+    const missing = [!url && 'SUPABASE_URL', !key && 'SUPABASE_SERVICE_ROLE_KEY'].filter(Boolean);
+    /* Three different situations used to print the same sentence. A name that
+       is present but empty is not a misspelling, and telling someone to check
+       their spelling when the spelling is right is worse than saying nothing. */
+    const empty = missing.filter((n) => n in process.env);
+    const absent = missing.filter((n) => !(n in process.env));
     const preview = out.deployment.vercel_env && out.deployment.vercel_env !== 'production';
-    out.next =
-      named.length
-        ? 'This build can see ' + named.join(', ') + ' but not ' +
-          [!url && 'SUPABASE_URL', !key && 'SUPABASE_SERVICE_ROLE_KEY'].filter(Boolean).join(' or ') +
-          '. Compare those names character by character with what the code asks for — ' +
-          'a misspelling looks identical to a variable that was never added.'
-        : 'This build can see no Supabase variable of any name. ' +
-          (preview
-            ? 'It is a ' + out.deployment.vercel_env + ' deployment, and variables scoped to ' +
-              'Production only are not given to it. In Vercel -> Settings -> Environment Variables, ' +
-              'edit each one and tick Preview and Development as well as Production — or point ' +
-              'Settings -> Git -> Production Branch at ' + out.deployment.git_branch + ' so this ' +
-              'branch deploys to Production. Then redeploy.'
-            : 'Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel -> Settings -> ' +
-              'Environment Variables, scoped to Production, then Deployments -> ... -> Redeploy. ' +
-              'Variables are read at build time, so adding them without a redeploy changes nothing.');
+    const parts = [];
+
+    if (empty.length) {
+      parts.push(empty.join(' and ') + ' ' + (empty.length > 1 ? 'exist' : 'exists') +
+        ' on this deployment but ' + (empty.length > 1 ? 'their values are' : 'its value is') +
+        ' empty — saved as a name with nothing in it. In Vercel -> Settings -> Environment ' +
+        'Variables, delete ' + empty.join(' and ') + ' and add ' +
+        (empty.length > 1 ? 'them' : 'it') + ' again, pasting the value this time. A Secret ' +
+        'variable cannot be read back after saving, so an empty one looks exactly like a full ' +
+        'one in the list. Then Deployments -> ... -> Redeploy.');
+    }
+    if (absent.length) {
+      parts.push(absent.join(' and ') + ' ' + (absent.length > 1 ? 'are' : 'is') +
+        ' not on this deployment at all. ' + (preview
+          ? 'This is a ' + out.deployment.vercel_env + ' build, and variables scoped to ' +
+            'Production only are never given to it — tick Preview on each, or point Settings ' +
+            '-> Git -> Production Branch at ' + out.deployment.git_branch + '.'
+          : 'Add ' + (absent.length > 1 ? 'them' : 'it') + ' scoped to Production, then redeploy. ' +
+            'Variables are read at build time, so adding without a redeploy changes nothing.'));
+    }
+    out.next = parts.join(' ');
+    return out;
+  }
+
+  if (/EXPIRED/.test(out.checks.service_key_looks_like || '')) {
+    out.next = 'SUPABASE_SERVICE_ROLE_KEY holds a service_role key that has expired. ' +
+      'Issue a new one: Supabase -> Project Settings -> API. Then redeploy.';
+    return out;
+  }
+  if (out.checks.service_key_looks_like && !/^service_role/.test(out.checks.service_key_looks_like)) {
+    out.next = 'SUPABASE_SERVICE_ROLE_KEY is set, but the key in it is ' +
+      out.checks.service_key_looks_like + '. It must be the service_role key: Supabase -> ' +
+      'Project Settings -> API -> service_role. Then redeploy.';
     return out;
   }
 
