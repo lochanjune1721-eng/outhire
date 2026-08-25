@@ -27,6 +27,19 @@ const UA = process.env.WIKI_UA || ('GOATdotLOL/1.0 (' +
     CONTACT].filter(Boolean).join('; ')) + ')');
 const REST = process.env.WIKI_REST || 'https://en.wikipedia.org/api/rest_v1';
 const COMMONS = process.env.COMMONS_API || 'https://commons.wikimedia.org/w/api.php';
+// en.wikipedia's own api.php answers for files hosted locally there as well as
+// for Commons files, so it is the right second place to ask.
+const WIKI_API = process.env.WIKI_API || 'https://en.wikipedia.org/w/api.php';
+
+/* The file name out of an image URL.
+   Wikipedia's REST summary appends UTM parameters to these URLs, and taking
+   everything after the last slash carried "?utm_source=en.wikipedia.org&..."
+   into the Commons title — which then matches nothing, for every person on the
+   site, and reported itself as an unverifiable licence. */
+function fileFromUrl(u) {
+  const path = String(u || '').split('#')[0].split('?')[0];
+  return decodeURIComponent(path.split('/').pop().replace(/^\d+px-/, ''));
+}
 
 // Freely reusable with attribution. Everything else is skipped.
 const OK_LICENCE = [
@@ -54,31 +67,33 @@ async function lead(name, steps) {
   if (!src) return null;
   return {
     // Ask for the size the cards actually use; no resizing needed afterwards.
-    url: src.replace(/\/\d+px-/, '/800px-'),
-    file: decodeURIComponent((d.originalimage?.source || src).split('/').pop().replace(/^\d+px-/, ''))
+    url: src.split('#')[0].split('?')[0].replace(/\/\d+px-/, '/800px-'),
+    file: fileFromUrl(d.originalimage?.source || src)
   };
 }
 
-async function licence(file, steps) {
-  const url = `${COMMONS}?` + new URLSearchParams({
+async function extmetadata(api, label, file, steps) {
+  const url = `${api}?` + new URLSearchParams({
     action: 'query', format: 'json', titles: 'File:' + file,
-    prop: 'imageinfo', iiprop: 'extmetadata'
+    prop: 'imageinfo', iiprop: 'extmetadata', origin: '*'
   });
   const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-  steps?.push({ step: 'commons licence', status: res.status, file });
   // Same reasoning as lead(): a refusal is not an unlicensed file.
-  if (!res.ok) throw new Error(`Commons returned ${res.status} for ${file}`);
+  if (!res.ok) throw new Error(`${label} returned ${res.status} for ${file}`);
   const body = await res.json();
   const page = Object.values(body?.query?.pages || {})[0];
   const em = page?.imageinfo?.[0]?.extmetadata;
-  if (!em) {
-    /* The usual cause is a lead image uploaded to en.wikipedia rather than to
-       Commons, so Commons has never heard of the file. Worth naming, because
-       "licence not verifiable" reads like a licensing problem when it is
-       really a lookup against the wrong wiki. */
-    steps?.push({ step: 'commons licence', missing_on_commons: page?.missing !== undefined });
-    return null;
-  }
+  steps?.push({ step: label + ' licence', status: res.status, file, found: !!em });
+  return em || null;
+}
+
+async function licence(file, steps) {
+  /* Commons holds most of them, but a lead image uploaded straight to
+     en.wikipedia is never there. Asking en.wikipedia second covers both,
+     since its api.php answers for local files and Commons files alike. */
+  let em = await extmetadata(COMMONS, 'commons', file, steps);
+  if (!em) em = await extmetadata(WIKI_API, 'en.wikipedia', file, steps);
+  if (!em) return null;
   return {
     licence: strip(em.LicenseShortName?.value),
     author: strip(em.Artist?.value) || 'Wikimedia Commons'

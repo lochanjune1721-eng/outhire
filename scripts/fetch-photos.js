@@ -153,10 +153,12 @@ async function restSummary(name) {
   const d = await res.json().catch(() => null);
   const src = d?.thumbnail?.source;
   if (!src) return null;
-  const file = decodeURIComponent(
-    (d.originalimage?.source || src).split('/').pop().replace(/^\d+px-/, '')
-  );
-  return { file, url: src.replace(/\/\d+px-/, '/800px-'), title: d.title, source: 'wiki' };
+  /* Strip the query string first. Wikipedia's REST summary appends UTM
+     parameters to image URLs, and they survive .pop() straight into the
+     Commons title, which then matches nothing. */
+  const clean = (u) => String(u || '').split('#')[0].split('?')[0];
+  const file = decodeURIComponent(clean(d.originalimage?.source || src).split('/').pop().replace(/^\d+px-/, ''));
+  return { file, url: clean(src).replace(/\/\d+px-/, '/800px-'), title: d.title, source: 'wiki' };
 }
 
 /** TMDB portraits and posters. Its images carry TMDB's terms, not a Commons
