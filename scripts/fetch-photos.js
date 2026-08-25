@@ -158,7 +158,11 @@ async function restSummary(name) {
      Commons title, which then matches nothing. */
   const clean = (u) => String(u || '').split('#')[0].split('?')[0];
   const file = decodeURIComponent(clean(d.originalimage?.source || src).split('/').pop().replace(/^\d+px-/, ''));
-  return { file, url: clean(src).replace(/\/\d+px-/, '/800px-'), title: d.title, source: 'wiki' };
+  /* And cap the width at the source's own. Wikimedia's thumbnailer answers
+     400, not 404, when asked for more pixels than the original has. */
+  const width = Number(d.originalimage?.width) || 0;
+  const want = width ? Math.min(800, width) : 800;
+  return { file, url: clean(src).replace(/\/\d+px-/, `/${want}px-`), title: d.title, source: 'wiki' };
 }
 
 /** TMDB portraits and posters. Its images carry TMDB's terms, not a Commons

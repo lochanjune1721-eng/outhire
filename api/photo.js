@@ -65,11 +65,24 @@ async function lead(name, steps) {
   const d = await res.json();
   const src = d?.thumbnail?.source;
   if (!src) return null;
-  return {
-    // Ask for the size the cards actually use; no resizing needed afterwards.
-    url: src.split('#')[0].split('?')[0].replace(/\/\d+px-/, '/800px-'),
-    file: fileFromUrl(d.originalimage?.source || src)
-  };
+  const clean = (u) => String(u || '').split('#')[0].split('?')[0];
+  const thumb = clean(src);
+  const orig = clean(d.originalimage?.source || '');
+  const width = Number(d.originalimage?.width) || 0;
+
+  /* Wikimedia's thumbnailer answers 400 — not 404 — when the width asked for
+     is larger than the source, so a flat 800px request fails outright on every
+     image narrower than that. Cap it at the original's own width.
+
+     Then keep two fallbacks in order: the full-size original, and finally the
+     thumbnail Wikipedia just handed us, which is known to work because it was
+     served a moment ago. A smaller picture beats initials. */
+  const want = width ? Math.min(800, width) : 800;
+  const urls = [];
+  for (const u of [thumb.replace(/\/\d+px-/, `/${want}px-`), orig, thumb]) {
+    if (u && !urls.includes(u)) urls.push(u);
+  }
+  return { urls, file: fileFromUrl(orig || thumb), original_width: width || null };
 }
 
 async function extmetadata(api, label, file, steps) {
@@ -269,7 +282,8 @@ async function resolve(slug, steps) {
   if (person.photo_path) return { body: { photo_path: person.photo_path, cached: true } };
 
   const hit = await lead(person.name, steps);
-  steps.push({ step: 'lead image', found: !!hit, file: hit?.file });
+  steps.push({ step: 'lead image', found: !!hit, file: hit?.file,
+               original_width: hit?.original_width, candidates: hit?.urls });
   if (!hit) return { body: { photo_path: null, why: 'no image found' } };
 
   const meta = await licence(hit.file, steps);
@@ -277,12 +291,25 @@ async function resolve(slug, steps) {
   steps.push({ step: 'licence check', licence: meta?.licence || null, acceptable: !!ok });
   if (!ok) return { body: { photo_path: null, why: `licence not verifiable (${meta?.licence || 'unknown'})` } };
 
-  const img = await fetch(hit.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
-  steps.push({ step: 'download image', status: img.status, url: hit.url });
-  if (!img.ok) return { body: { photo_path: null, why: `download failed (${img.status})` } };
-  const bytes = Buffer.from(await img.arrayBuffer());
-  steps.push({ step: 'download image', bytes: bytes.length });
-  if (bytes.length > 5 * 1024 * 1024) return { body: { photo_path: null, why: 'image too large' } };
+  const MAX = 5 * 1024 * 1024;
+  let img = null, bytes = null, lastStatus = 0;
+  for (const url of hit.urls) {
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
+    lastStatus = r.status;
+    const declared = Number(r.headers.get('content-length')) || 0;
+    if (!r.ok || declared > MAX) {
+      steps.push({ step: 'download image', status: r.status, url, too_large: declared > MAX || undefined });
+      continue;                       // try the next candidate rather than give up
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    steps.push({ step: 'download image', status: r.status, url, bytes: buf.length });
+    if (buf.length > MAX) continue;   // no content-length header; found out the hard way
+    img = r; bytes = buf; break;
+  }
+  if (!img) {
+    return { body: { photo_path: null,
+      why: `download failed (${lastStatus}) after trying ${hit.urls.length} URL(s)` } };
+  }
 
   const type = img.headers.get('content-type') || 'image/jpeg';
   const ext = /png/.test(type) ? 'png' : /webp/.test(type) ? 'webp' : 'jpg';
