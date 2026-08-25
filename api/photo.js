@@ -77,17 +77,51 @@ async function licence(file) {
 
 /* GET /api/photo — open this in a browser to find out why pictures are not
    appearing. It reports booleans and counts only, never a key. */
+/* Which deployment is answering. Without this, "the variables are set" and
+   "the endpoint cannot see them" are both true and there is no way to tell why
+   — a Preview build does not receive Production-scoped variables, and a stale
+   build does not receive anything added since it was built. Names and refs
+   only; no value from process.env is ever read into this response. */
+function deployment() {
+  const d = {
+    vercel_env: process.env.VERCEL_ENV || '(not on Vercel)',
+    git_branch: process.env.VERCEL_GIT_COMMIT_REF || '(unknown)',
+    commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || '(unknown)'
+  };
+  /* Settles the other silent cause: a variable named almost correctly. A
+     misspelling is invisible in a dashboard list and reads exactly like a
+     variable that was never added. */
+  d.env_names_seen = Object.keys(process.env)
+    .filter((n) => /SUP|BASE|SERVICE_ROLE|ANON/i.test(n)).sort();
+  return d;
+}
+
 async function diagnose() {
-  const out = { ok: false, checks: {}, next: null };
+  const out = { ok: false, deployment: deployment(), checks: {}, next: null };
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   out.checks.SUPABASE_URL_set = !!url;
   out.checks.SUPABASE_SERVICE_ROLE_KEY_set = !!key;
   if (!url || !key) {
-    out.next = 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel ' +
-               '(Project -> Settings -> Environment Variables), then redeploy. ' +
-               'Without them this endpoint cannot read or write anything.';
+    const named = out.deployment.env_names_seen;
+    const preview = out.deployment.vercel_env && out.deployment.vercel_env !== 'production';
+    out.next =
+      named.length
+        ? 'This build can see ' + named.join(', ') + ' but not ' +
+          [!url && 'SUPABASE_URL', !key && 'SUPABASE_SERVICE_ROLE_KEY'].filter(Boolean).join(' or ') +
+          '. Compare those names character by character with what the code asks for — ' +
+          'a misspelling looks identical to a variable that was never added.'
+        : 'This build can see no Supabase variable of any name. ' +
+          (preview
+            ? 'It is a ' + out.deployment.vercel_env + ' deployment, and variables scoped to ' +
+              'Production only are not given to it. In Vercel -> Settings -> Environment Variables, ' +
+              'edit each one and tick Preview and Development as well as Production — or point ' +
+              'Settings -> Git -> Production Branch at ' + out.deployment.git_branch + ' so this ' +
+              'branch deploys to Production. Then redeploy.'
+            : 'Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel -> Settings -> ' +
+              'Environment Variables, scoped to Production, then Deployments -> ... -> Redeploy. ' +
+              'Variables are read at build time, so adding them without a redeploy changes nothing.');
     return out;
   }
 
@@ -155,7 +189,10 @@ export default webHandler(async function handler(request) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return json({
       photo_path: null,
-      why: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set on this deployment. Open /api/photo in a browser for the full diagnosis.'
+      why: 'SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not visible to this ' +
+           (process.env.VERCEL_ENV || 'local') + ' deployment (' +
+           (process.env.VERCEL_GIT_COMMIT_REF || 'unknown branch') +
+           '). Open /api/photo in a browser for the full diagnosis.'
     }, 500);
   }
   try {

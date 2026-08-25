@@ -127,10 +127,24 @@ Two things to expect on a healthy deploy, so neither reads as a fault:
 ### When nothing appears
 
 Open **`https://your-domain/api/photo`** in a browser. It answers with a
-diagnosis — booleans and counts only, never a key value — naming the first
-thing that is wrong and what to do about it: variables not set, the schema not
-run, the anon key pasted in where the service role key belongs, the `photos`
-bucket missing, or Wikipedia refusing your deployment.
+diagnosis — names, booleans and counts only, never a key value — naming the
+first thing that is wrong and what to do about it: variables not set, the
+schema not run, the anon key pasted in where the service role key belongs, the
+`photos` bucket missing, or Wikipedia refusing your deployment.
+
+The `deployment` block at the top is there for the case where the dashboard
+plainly shows the variables and the endpoint plainly cannot see them. Both can
+be true at once, and only two things cause it:
+
+- `vercel_env` is **not** `production`. Variables scoped to Production only are
+  not handed to a Preview build. Either tick Preview on each variable, or point
+  Settings → Git → Production Branch at the branch you are deploying.
+- `env_names_seen` lists a name that is *nearly* right — `SUPBASE_URL` for
+  `SUPABASE_URL`. A misspelling is invisible in a dashboard list and behaves
+  exactly like a variable that was never added.
+
+`commit` tells you whether the build answering you is the one you just pushed,
+which saves diagnosing a fix that is not deployed yet.
 
 If that page says everything checks out but boards still show initials, open a
 board with the browser console visible. A site-wide cause prints once there. A
