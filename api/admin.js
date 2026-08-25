@@ -1,10 +1,9 @@
 /* POST /api/admin — password checked here, never in the browser.
  * Photo swaps, deletes, and adding names during the manual review pass. */
 import {
-  webHandler, json, bad, readJson, db, count, env,
+  webHandler, json, bad, readJson, db, env,
   constantTimeEqual, mintAdminToken, checkAdminToken
 } from './_lib.js';
-import { resolveImage, imageRow } from './_wikimedia.js';
 
 export default webHandler(async function handler(request) {
   if (request.method !== 'POST') return bad('Use POST.', 405);
@@ -60,72 +59,6 @@ export default webHandler(async function handler(request) {
       if (verdict === 'pending') patch.image_attempts = 0;
       await db.update('people', db.eq('id', b.id), patch);
       return json({ ok: true, image_status: verdict });
-    }
-
-    /* Resolve a batch of images, from the browser.
-       ------------------------------------------------------------------
-       The bulk pass lives in scripts/resolve-images.mjs and needs a laptop
-       with the service role key on it. That is a step this project cannot
-       assume anybody will take — it is the same mistake as making the site
-       depend on a script nobody runs — so the whole job is also drivable from
-       /admin.html, a batch per request, with the browser holding the loop.
-
-       Small batches on purpose: each person costs two to four Wikimedia calls
-       and a Vercel function has thirty seconds. */
-    if (b.action === 'resolve-images') {
-      const size = Math.min(10, Math.max(1, Number(b.size) || 6));
-      const statuses = b.recheck ? 'pending,needs_review' : 'pending';
-
-      let progress;
-      try {
-        progress = {
-          verified: await count('people', 'image_status=eq.verified'),
-          needs_review: await count('people', 'image_status=eq.needs_review'),
-          missing: await count('people', 'image_status=eq.missing'),
-          pending: await count('people', 'image_status=eq.pending')
-        };
-      } catch (e) {
-        return bad('The image columns are not in this database yet. Run ' +
-                   'sql/image-columns.sql in the Supabase SQL editor. (' + e.message + ')');
-      }
-
-      // Asking only where things stand, without doing any work.
-      if (b.peek) return json({ done: progress.pending === 0, progress, resolved: [] });
-
-      const rows = await db.select('people',
-        `image_status=in.(${statuses})&select=` +
-        encodeURIComponent('id,slug,name,wikipedia_url,image_attempts,categories(name,group_name)') +
-        `&order=slug&limit=${size}`);
-
-      if (!rows.length) return json({ done: true, progress, resolved: [] });
-
-      /* Three at a time. Wikimedia is a donated resource and this runs from a
-         datacentre IP; the browser paces the gaps between batches. */
-      const out = [];
-      for (let i = 0; i < rows.length; i += 3) {
-        await Promise.all(rows.slice(i, i + 3).map(async (p) => {
-          try {
-            const r = await resolveImage({
-              name: p.name, board: p.categories?.name,
-              group: p.categories?.group_name, wikipedia_url: p.wikipedia_url
-            });
-            await db.update('people', db.eq('id', p.id),
-              { ...imageRow(r), image_attempts: (p.image_attempts || 0) + 1 });
-            out.push({ name: p.name, status: r.image_status, note: r.image_note || null });
-          } catch (e) {
-            /* Wikimedia refusing us is not a verdict about this person. Leave
-               the row alone so a later pass picks it up again. */
-            out.push({ name: p.name, status: 'failed', note: e.message });
-          }
-        }));
-      }
-      const failed = out.filter((r) => r.status === 'failed').length;
-      return json({
-        done: false, progress, resolved: out,
-        // Every name failing means Wikimedia is refusing us, not that these
-        // particular people are unphotographed. Stop rather than burn 2,900.
-        stop: failed === out.length ? 'Every lookup in this batch failed: ' + out[0].note : null
-      });
     }
 
     if (b.action === 'delete') {

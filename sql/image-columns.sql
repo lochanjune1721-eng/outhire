@@ -56,3 +56,25 @@ create index if not exists people_image_status_idx on people (image_status);
 -- a Commons file title, a CDN URL, a licence and an author credit. The write
 -- path is unchanged, which is to say there isn't one: no insert, update or
 -- delete policy exists on people, so only the service role can fill these in.
+
+-- ===========================================================================
+-- The resolver runs itself, so it needs somewhere to say "I am already
+-- running". One row. Without it, a cron tick and three page loads would all
+-- start resolving the same people at the same time.
+-- ===========================================================================
+
+create table if not exists image_job (
+  id         int primary key default 1 check (id = 1),
+  running    boolean default false,
+  started_at timestamptz,
+  -- Touched after every batch. A run that dies mid-flight leaves running=true
+  -- forever, so a stale heartbeat is what lets the next tick take over.
+  last_beat  timestamptz,
+  done       int default 0,
+  note       text
+);
+insert into image_job (id) values (1) on conflict (id) do nothing;
+
+alter table image_job enable row level security;
+-- No policy: nobody reaches this except the service role, which bypasses RLS.
+-- The progress numbers the admin page shows come from counting people rows.

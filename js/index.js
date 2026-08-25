@@ -167,6 +167,9 @@
        the very first tile, which are the only images certain to be above the
        fold on every screen size. */
     window.GImg.activate($('#groups'));
+    // If anybody is still unresolved, start the server working on it. Once per
+    // session, not awaited, and nothing on this page depends on it.
+    window.GImg.poke(people);
     var first = ordered.length ? groups[ordered[0]] : null;
     var lead = first && first.length ? (byCat[first[0].id] || []).slice(0, 2) : [];
     if (lead.length) {

@@ -255,7 +255,44 @@
     }
   }
 
+  /* ------------------------------------------------------------------
+     POKING THE RESOLVER
+
+     A brand new deployment has 2,926 unresolved people and no reason for
+     anything to start resolving them. The cron gets there once a day, which
+     is no use to somebody who has just deployed and is looking at the site.
+
+     So when a page notices unresolved people, it pokes /api/images once and
+     forgets about it. That endpoint returns immediately and does the work
+     server-side, chaining into fresh invocations of itself until the queue is
+     empty — the browser is not involved beyond this one call, does not wait
+     for it, and does not use the result. Once per session, only when there is
+     something to do, and harmless if fifty visitors do it at once because the
+     endpoint holds a lock.
+
+     This is not the frontend resolving images. The frontend renders whatever
+     is in the database and rings a bell on its way past.
+     ------------------------------------------------------------------ */
+  function poke(people) {
+    try {
+      if (sessionStorage.getItem('goat_poked')) return;
+      var pending = false;
+      for (var i = 0; i < people.length; i++) {
+        var s = people[i] && people[i].image_status;
+        if (s === 'pending' || s === undefined) { pending = s === 'pending'; if (pending) break; }
+      }
+      if (!pending) return;
+      sessionStorage.setItem('goat_poked', '1');
+      // Deliberately not awaited and deliberately not read.
+      fetch('/api/images', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) { /* private mode, no sessionStorage — skip it */ }
+  }
+
   window.GImg = {
+    poke: poke,
     markup: markup, activate: activate, preload: preload,
     urlFor: urlFor, atWidth: atWidth, srcsetFor: srcsetFor, baseUrl: baseUrl,
     initials: initials, widthOf: widthOf, LADDER: LADDER

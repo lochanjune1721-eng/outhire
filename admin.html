@@ -27,9 +27,10 @@
     <div class="panel" style="margin-top:18px">
       <h2>Images</h2>
       <p class="muted" style="font-size:13px;margin-bottom:12px">
-        Finds each contender on Wikimedia Commons once and stores the result. Runs
-        from this page — leave the tab open. Safe to stop and resume: it picks up
-        wherever it left off.
+        Finds each contender on Wikimedia Commons once and stores the result.
+        The server does the work and keeps going on its own — closing this tab
+        does not stop it. It also runs nightly, and starts itself whenever a
+        visitor lands on a site with anyone still unresolved.
       </p>
       <div id="img-progress" class="muted" style="font:13px/1.6 var(--mono,monospace)">Checking…</div>
       <div style="height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin:10px 0 14px">
@@ -37,7 +38,6 @@
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-gold btn-sm" type="button" id="img-start">Resolve all images</button>
-        <button class="btn btn-sm hide" type="button" id="img-stop">Stop</button>
         <span class="muted" id="img-now" style="font-size:12px"></span>
       </div>
       <div id="img-log" style="margin-top:12px;max-height:220px;overflow:auto;

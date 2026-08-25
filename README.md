@@ -124,14 +124,25 @@ rendering, and nothing on the critical path waits for a search.
 | Columns | `sql/image-columns.sql` (existing DB) / `sql/schema.sql` (fresh) |
 | Performance test page | `/image-test.html` |
 
-### Running the bulk pass
+### It runs itself
 
-**From the browser, which needs nothing installed.** Open `/admin.html`, sign in
-with `ADMIN_PASSWORD`, and press **Resolve all images**. It works through a
-batch at a time and shows a progress bar, a running tally and a live log;
-roughly twelve minutes for all 2,926. Leave the tab open. Closing it stops the
-run and pressing Resume picks up where it left off, because the progress is
-rows in the database rather than state in the page.
+Nobody presses anything. `/api/images` resolves what fits in one function
+invocation, hands off to a fresh invocation of itself, and repeats until the
+queue is empty — about an hour for 2,926, unattended. Three things start it:
+
+- a **cron**, nightly (`vercel.json`)
+- **any visitor** landing on a site with unresolved people — one call per
+  browser session, not awaited, and nothing on the page depends on it
+- **`/admin.html`**, which has a Start now button and a progress bar
+
+Only one chain runs at a time: a lock row in `image_job` is handed from each
+invocation to its successor, so a cron tick and fifty visitors at once produce
+one chain, not fifty-one. A run that dies mid-flight stops writing heartbeats
+and the next attempt takes over after three minutes.
+
+If every lookup in a batch fails, the chain stops and records why rather than
+grinding through 2,900 names against an endpoint that is refusing us. Rows are
+left untouched, so a later run retries them.
 
 **Or from a laptop, if you have one with the service role key on it:**
 
