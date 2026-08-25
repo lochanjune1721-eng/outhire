@@ -167,6 +167,7 @@
        the very first tile, which are the only images certain to be above the
        fold on every screen size. */
     window.GImg.activate($('#groups'));
+    imageBanner();
     // If anybody is still unresolved, start the server working on it. Once per
     // session, not awaited, and nothing on this page depends on it.
     window.GImg.poke(people);
@@ -177,6 +178,52 @@
         return i ? { person: p, size: 90, sizes: TILE_TWO_SIZES }
                  : { person: p, size: 200, sizes: TILE_ONE_SIZES };
       }));
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     SAYING WHY THERE ARE NO PICTURES
+
+     The site falls back to initials when the image columns are missing, which
+     is right — a pending migration should not take the whole page down. But
+     falling back silently means the only difference between "not set up yet"
+     and "broken" is a console line nobody opens, and this looked like nothing
+     had changed for days.
+
+     So it says so, on the page, in the one place you cannot miss.
+     ------------------------------------------------------------------ */
+  async function imageBanner() {
+    var host = $('#groups');
+    if (!host || document.getElementById('img-banner')) return;
+    var r;
+    try { r = await (await fetch('/api/images')).json(); } catch (e) { return; }
+
+    var msg = null, tone = 'notice';
+    if (r.error) {
+      msg = r.error;
+      tone = 'notice-gold';
+    } else if (r.progress && r.progress.outstanding > 0) {
+      var total = (r.progress.verified || 0) + (r.progress.missing || 0) +
+                  (r.progress.needs_review || 0) + (r.progress.pending || 0);
+      msg = 'Finding pictures — ' + ((r.progress.verified || 0) + (r.progress.missing || 0)) +
+            ' of ' + total + ' looked up so far. This runs by itself; reload in a few minutes.' +
+            (r.note ? ' (' + r.note + ')' : '');
+    } else if (r.note && /stopped|could not/i.test(r.note)) {
+      msg = 'The picture finder stopped: ' + r.note;
+      tone = 'notice-gold';
+    }
+    if (!msg) return;
+
+    var el = document.createElement('p');
+    el.id = 'img-banner';
+    el.className = 'notice ' + tone;
+    el.style.cssText = 'margin:0 0 18px';
+    el.textContent = msg;
+    host.parentNode.insertBefore(el, host);
+
+    // Still working: check back without a reload so the count moves.
+    if (r.progress && r.progress.outstanding > 0) {
+      setTimeout(function () { el.remove(); imageBanner(); }, 20000);
     }
   }
 
