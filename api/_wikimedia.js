@@ -188,14 +188,241 @@ function score(name, art, ctx) {
   // "Michael Jordan (basketball)" is a stronger signal than a bare title.
   const qualifier = (art.title.match(/\(([^)]+)\)/) || [])[1] || '';
 
-  const hay = fold(art.extract + ' ' + qualifier);
+  const hay = fold((art.extract || '') + ' ' + (art.description || '') + ' ' + qualifier);
   const ctxHit = ctx.expect.length ? ctx.expect.some((k) => hay.includes(fold(k))) : true;
   // The article should also be about someone with this name, not merely
   // mention them. Lead sentences name their subject.
-  const subject = surname ? fold(art.extract).slice(0, 200).includes(surname) : false;
+  const subject = surname
+    ? fold((art.extract || '') + ' ' + (art.description || '')).slice(0, 240).includes(surname)
+    : false;
 
   return { nameHit, exact, ctxHit, subject, qualifier,
            surnameInTitle: surname ? got.includes(surname) : false };
+}
+
+/* ---------------------------------------------------------------------------
+   THE SAME TWO LOOKUPS, IN BULK
+
+   One person at a time costs three or four API calls, so 2,926 people is
+   roughly nine thousand requests — hours of wall clock and far more load on
+   Wikimedia than this deserves. The API takes up to twenty titles per query
+   and fifty for file info, which turns the whole job into a couple of hundred
+   requests. Faster for us and politer to them, which is rare.
+   --------------------------------------------------------------------------- */
+
+/** MediaWiki rewrites the titles you asked for. Follow the trail back. */
+function titleFollower(body) {
+  const hop = new Map();
+  for (const n of body?.query?.normalized || []) hop.set(n.from, n.to);
+  for (const r of body?.query?.redirects || []) hop.set(r.from, r.to);
+  return (t) => {
+    let cur = t;
+    for (let i = 0; i < 5 && hop.has(cur); i++) cur = hop.get(cur);
+    return cur;
+  };
+}
+
+const pagesByTitle = (body) => {
+  const m = new Map();
+  for (const p of Object.values(body?.query?.pages || {})) m.set(p.title, p);
+  return m;
+};
+
+/* Twenty, because prop=extracts caps there. prop=description comes from
+   Wikidata and would allow fifty, but it is the extract that names the
+   subject, and one call for twenty is already thirty times better than
+   twenty calls for one. */
+const ARTICLE_BATCH = 20;
+const FILE_BATCH = 50;
+
+/* Three batches in flight is sixty titles at a time. Wikimedia asks bulk
+   clients to be considerate rather than serial, and three connections against
+   a couple of hundred total requests is a much lighter footprint than the nine
+   thousand single lookups this replaces. */
+const BATCH_CONCURRENCY = 3;
+
+async function inChunks(items, size, concurrency, fn) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  const out = [];
+  for (let i = 0; i < chunks.length; i += concurrency) {
+    out.push(...await Promise.all(chunks.slice(i, i + concurrency).map(fn)));
+  }
+  return out;
+}
+
+async function articleMany(titles) {
+  const out = new Map();
+  const uniq = [...new Set(titles.filter(Boolean))];
+  await inChunks(uniq, ARTICLE_BATCH, BATCH_CONCURRENCY, async (slice) => {
+    const body = await api('wiki', {
+      action: 'query', titles: slice.join('|'), redirects: '1',
+      prop: 'pageimages|pageprops|description|extracts',
+      piprop: 'original|name', ppprop: 'disambiguation',
+      exintro: '1', explaintext: '1', exchars: '500', exlimit: String(ARTICLE_BATCH)
+    });
+    const follow = titleFollower(body);
+    const byTitle = pagesByTitle(body);
+    for (const t of slice) {
+      const page = byTitle.get(follow(t));
+      if (!page || page.missing !== undefined) { out.set(t, null); continue; }
+      if (page.pageprops && 'disambiguation' in page.pageprops) {
+        out.set(t, { title: page.title, disambiguation: true });
+        continue;
+      }
+      out.set(t, {
+        title: page.title,
+        file: page.pageimage ? String(page.pageimage).replace(/_/g, ' ') : null,
+        extract: page.extract || '',
+        description: page.description || ''
+      });
+    }
+  });
+  return out;
+}
+
+async function fileInfoMany(fileTitles, width) {
+  const out = new Map();
+  let want = [...new Set(fileTitles.filter(Boolean))]
+    .map((f) => (f.startsWith('File:') ? f : 'File:' + f));
+
+  /* Commons holds most of them; a lead image uploaded straight to en.wikipedia
+     is genuinely absent there, and en.wikipedia's api.php answers for local
+     and Commons files alike. Ask Commons for everything, then only the
+     stragglers of the second. */
+  for (const which of ['commons', 'wiki']) {
+    if (!want.length) break;
+    const missed = [];
+    await inChunks(want, FILE_BATCH, BATCH_CONCURRENCY, async (slice) => {
+      const body = await api(which, {
+        action: 'query', titles: slice.join('|'),
+        prop: 'imageinfo', iiprop: 'url|size|extmetadata|mime', iiurlwidth: String(width)
+      });
+      const follow = titleFollower(body);
+      const byTitle = pagesByTitle(body);
+      for (const t of slice) {
+        const page = byTitle.get(follow(t));
+        const info = page?.imageinfo?.[0];
+        if (info) out.set(t, { info, page, host: which });
+        else missed.push(t);
+      }
+    });
+    want = missed;
+  }
+  return out;
+}
+
+/**
+ * Resolve a whole batch of contenders at once.
+ *
+ * @param {Array<{name, board?, group?, wikipedia_url?}>} people
+ * @returns {Promise<Array<object>>} one result per person, in the same order.
+ */
+export async function resolveMany(people) {
+  const ctxs = people.map((p) => contextFor(p.group, p.board));
+
+  /* One title each to start with: whatever the seed data says, or the name.
+     A given wikipedia_url is authoritative and skips a guess. */
+  const first = people.map((p) => {
+    const given = p.wikipedia_url &&
+      decodeURIComponent(String(p.wikipedia_url).split('/wiki/')[1] || '').replace(/_/g, ' ');
+    return given || p.name;
+  });
+
+  let arts = await articleMany(first);
+
+  /* Where the seed title missed, the plain name is worth one more batch —
+     still one request per twenty people, not one per person. */
+  const retry = [];
+  people.forEach((p, i) => {
+    const a = arts.get(first[i]);
+    if ((!a || a.disambiguation || !a.file) && first[i] !== p.name) retry.push(p.name);
+  });
+  if (retry.length) {
+    const more = await articleMany(retry);
+    for (const [k, v] of more) arts.set(k, v);
+  }
+
+  const chosen = new Array(people.length).fill(null);
+  const scores = new Array(people.length).fill(null);
+  const needSearch = [];
+
+  people.forEach((p, i) => {
+    for (const t of [first[i], p.name]) {
+      const a = arts.get(t);
+      if (!a || a.disambiguation || !a.file) continue;
+      const sc = score(p.name, a, ctxs[i]);
+      if (!chosen[i] || sc.exact || sc.nameHit === 1) { chosen[i] = a; scores[i] = sc; }
+      if (sc.exact || sc.nameHit === 1) break;
+    }
+    if (!chosen[i]) needSearch.push(i);
+  });
+
+  /* Search is the only step that cannot be batched — list=search takes one
+     query. It is also the rare path once the direct titles have run, and the
+     concurrency is what keeps a batch of a hundred from serialising on it. */
+  for (let i = 0; i < needSearch.length; i += 4) {
+    await Promise.all(needSearch.slice(i, i + 4).map(async (idx) => {
+      const p = people[idx], ctx = ctxs[idx];
+      let hits;
+      try { hits = await searchArticles(p.name, ctx); } catch { return; }
+      const found = await articleMany(hits.slice(0, 3));
+      for (const t of hits.slice(0, 3)) {
+        const a = found.get(t);
+        if (!a || a.disambiguation || !a.file) continue;
+        const sc = score(p.name, a, ctx);
+        if (!sc.surnameInTitle) continue;
+        if (!chosen[idx] || sc.ctxHit) { chosen[idx] = a; scores[idx] = sc; }
+        if (sc.ctxHit) break;
+      }
+    }));
+  }
+
+  const files = await fileInfoMany(chosen.map((a) => a?.file), BASE_THUMB_WIDTH);
+
+  return people.map((p, i) => {
+    const art = chosen[i];
+    if (!art?.file) {
+      return { image_status: 'missing', image_note: 'no article with a lead image' };
+    }
+    const key = art.file.startsWith('File:') ? art.file : 'File:' + art.file;
+    const found = files.get(key);
+    if (!found) {
+      return { image_status: 'missing',
+               image_note: `file not found on Commons or en.wikipedia: ${art.file}` };
+    }
+    const { info, page } = found;
+    const bad = usable(info);
+    if (bad) return { image_status: 'missing', image_note: bad };
+
+    const { licence, author } = licenceOf(info);
+    if (!licenceOk(licence)) {
+      return { image_status: 'missing', image_note: `licence not reusable (${licence || 'unknown'})` };
+    }
+
+    /* Confident when the name matched outright and the article talks about the
+       right field. Anything less gets an image AND a flag: an uncertain match
+       is never attached silently. */
+    const sc = scores[i] || {};
+    const confident = (sc.exact || sc.nameHit === 1) && sc.ctxHit && (sc.subject || sc.exact);
+    return {
+      image_status: confident ? 'verified' : 'needs_review',
+      image_note: confident ? null
+        : `matched "${art.title}" but ` + (!sc.ctxHit
+            ? 'the article does not mention ' + (p.group || 'this field')
+            : 'the name is not an exact match'),
+      wikimedia_file_title: page.title,
+      wikimedia_page_url: info.descriptionurl ||
+        `https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, '_'))}`,
+      wikimedia_original_url: clean(info.url),
+      wikimedia_thumbnail_url: clean(info.thumburl),
+      wikimedia_width: info.width || null,
+      wikimedia_height: info.height || null,
+      image_license: licence,
+      image_author: author,
+      article_title: art.title
+    };
+  });
 }
 
 /* ---------------------------------------------------------------------------

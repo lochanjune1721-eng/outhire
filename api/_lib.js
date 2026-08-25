@@ -128,6 +128,16 @@ export const db = {
     sbFetch(`/rest/v1/${table}?${query}`, {
       method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(patch)
     }),
+  /* Write many rows in one request. A batch of a hundred people used to be a
+     hundred round trips to Supabase, which cost more wall clock than the
+     Wikimedia lookups they came from. Upserts on the primary key, so only the
+     columns present are touched. */
+  upsertMany: (table, rows) =>
+    sbFetch(`/rest/v1/${table}`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(rows)
+    }),
   del: (table, query) => sbFetch(`/rest/v1/${table}?${query}`, { method: 'DELETE' }),
   rpc: (fn, args) => sbFetch(`/rest/v1/rpc/${fn}`, { method: 'POST', body: JSON.stringify(args || {}) }),
   eq: (col, val) => `${col}=eq.${q(val)}`

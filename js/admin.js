@@ -37,7 +37,12 @@
   $('#img-start').addEventListener('click', async function () {
     $('#img-start').disabled = true;
     $('#img-now').textContent = 'Starting.';
-    try { await fetch('/api/images', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+    /* force: a run already in flight is usually older code, and waiting it
+       out is the one thing a Start button should not make you do. */
+    try {
+      await fetch('/api/images', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify({ force: true }) });
+    }
     catch (e) { $('#img-now').textContent = e.message; }
     startWatching();
     poll();
