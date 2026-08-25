@@ -21,9 +21,11 @@
  *   GET  /api/images          where things stand; starts nothing
  */
 import { webHandler, json, db, count, sbFetch } from './_lib.js';
-import { resolveImage, imageRow } from './_wikimedia.js';
+import { resolveImage, imageRow, SELF_SIZES, thumbAt, UA } from './_wikimedia.js';
 
 const PER_RUN = 24;        // people per invocation — comfortably inside 30s
+const CACHE_PER_RUN = 8;   // three downloads and three uploads each, so fewer
+const MAX_PHOTO_ATTEMPTS = 3;
 const CONCURRENT = 3;      // Wikimedia is donated infrastructure
 const MAX_CHAIN = 400;     // 400 x 24 is far more than 2,926; a runaway stop
 const STALE_MS = 3 * 60 * 1000;
@@ -91,12 +93,85 @@ async function handOff(depth, token) {
 /* -------------------------------- the work ------------------------------- */
 
 async function progress() {
-  return {
+  const p = {
     verified: await count('people', 'image_status=eq.verified'),
     needs_review: await count('people', 'image_status=eq.needs_review'),
     missing: await count('people', 'image_status=eq.missing'),
-    pending: await count('people', 'image_status=eq.pending')
+    pending: await count('people', 'image_status=eq.pending'),
+    self_hosted: await count('people', 'photo_path=not.is.null'),
+    to_cache: await count('people', CACHE_FILTER)
   };
+  // What is left to do, of either kind. The chain runs until this is zero.
+  p.outstanding = (p.pending || 0) + (p.to_cache || 0);
+  return p;
+}
+
+/* Identified, but the bytes are still on somebody else's CDN. */
+const CACHE_FILTER =
+  'image_status=eq.verified&photo_path=is.null&wikimedia_thumbnail_url=not.is.null' +
+  `&photo_attempts=lt.${MAX_PHOTO_ATTEMPTS}`;
+
+/* ------------------------------ self-hosting ----------------------------- */
+
+async function upload(path, bytes, type) {
+  const base = process.env.SUPABASE_URL.replace(/\/$/, '');
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const res = await fetch(`${base}/storage/v1/object/photos/${path}`, {
+    method: 'POST',
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': type, 'x-upsert': 'true' },
+    body: bytes
+  });
+  if (!res.ok) {
+    // Supabase says why in the body; a bare status number sends you guessing.
+    throw new Error(`upload ${path} failed (${res.status}) ` +
+      (await res.text().catch(() => '')).slice(0, 160));
+  }
+}
+
+/** Copy one person's picture into our bucket at every size the site renders. */
+async function cacheOne(p) {
+  const src = p.wikimedia_thumbnail_url;
+  const ext = /\.png$/i.test(src) ? 'png' : /\.webp$/i.test(src) ? 'webp' : 'jpg';
+  const file = `${p.slug}.${ext}`;
+
+  for (const size of SELF_SIZES) {
+    const url = thumbAt(src, size, p.wikimedia_width);
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error(`download ${size}px failed (${res.status})`);
+    const type = res.headers.get('content-type') || `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length > 5 * 1024 * 1024) throw new Error(`${size}px is over the 5MB bucket limit`);
+    await upload(`${size}/${file}`, bytes, type);
+  }
+
+  /* photo_path is the base name only. The site builds 100/300/800 around it,
+     so one column describes three files and there is nothing to keep in sync. */
+  await db.update('people', db.eq('id', p.id),
+    { photo_path: file, photo_note: null, photo_attempts: (p.photo_attempts || 0) + 1 });
+}
+
+async function cacheBatch() {
+  const rows = await db.select('people',
+    `${CACHE_FILTER}&select=` +
+    encodeURIComponent('id,slug,wikimedia_thumbnail_url,wikimedia_width,photo_attempts') +
+    `&order=slug&limit=${CACHE_PER_RUN}`);
+  if (!rows.length) return { done: 0, failed: 0, empty: true };
+
+  let done = 0, failed = 0, lastError = null;
+  for (const p of rows) {
+    try { await cacheOne(p); done++; }
+    catch (e) {
+      failed++; lastError = e.message;
+      /* Count the attempt so a file that will never download stops being
+         retried, and keep the reason where the admin page can show it. The
+         Wikimedia URL still works, so the site loses nothing meanwhile. */
+      await db.update('people', db.eq('id', p.id),
+        { photo_attempts: (p.photo_attempts || 0) + 1, photo_note: e.message.slice(0, 300) })
+        .catch(() => {});
+    }
+    await beat(done);
+  }
+  return { done, failed, lastError, empty: false };
 }
 
 async function runBatch() {
@@ -139,7 +214,7 @@ export default webHandler(async function handler(request) {
         running: !!job?.running,
         last_beat: job?.last_beat || null,
         note: job?.note || null,
-        finished: p.pending === 0
+        finished: p.outstanding === 0
       });
     } catch (e) {
       return json({ error: 'The image columns are not in this database yet. Run ' +
@@ -175,20 +250,31 @@ export default webHandler(async function handler(request) {
   }
 
   try {
-    const batch = await runBatch();
+    /* Two phases, in order. Identify everybody first, because a name with no
+       Commons file has nothing to download, and only then copy the bytes
+       across. Whichever has work left is what this invocation does. */
+    const batch = (await count('people', 'image_status=eq.pending')) > 0
+      ? { phase: 'resolve', ...(await runBatch()) }
+      : { phase: 'cache', ...(await cacheBatch()) };
     const p = await progress();
 
-    if (batch.empty || p.pending === 0) {
+    if (batch.empty && p.outstanding === 0) {
       await release('finished');
       return json({ started: true, finished: true, progress: p });
+    }
+    if (batch.empty) {
+      // This phase is done but the other is not; hand on and let it pick up.
+      const chained = await handOff(depth, lock.started_at);
+      if (!chained.ok) { await release('could not hand off: ' + chained.why); }
+      return json({ started: true, phase: batch.phase, chained: chained.ok, progress: p });
     }
     /* Every lookup failing means Wikimedia is refusing this deployment, not
        that these two dozen people are unphotographed. Stop the chain and leave
        the reason where the admin page can show it, rather than grinding
        through 2,900 names against a wall. */
     if (batch.done === 0 && batch.failed > 0) {
-      await release('stopped: ' + batch.lastError);
-      return json({ started: true, stopped: batch.lastError, progress: p });
+      await release('stopped in ' + batch.phase + ': ' + batch.lastError);
+      return json({ started: true, phase: batch.phase, stopped: batch.lastError, progress: p });
     }
     if (depth >= MAX_CHAIN) {
       await release('chain limit reached');
@@ -201,11 +287,11 @@ export default webHandler(async function handler(request) {
     const chained = await handOff(depth, lock.started_at);
     if (!chained.ok) {
       await release('could not hand off: ' + chained.why);
-      return json({ started: true, resolved: batch.done, failed: batch.failed,
-                    chained: false, stopped: chained.why, progress: p });
+      return json({ started: true, phase: batch.phase, resolved: batch.done,
+                    failed: batch.failed, chained: false, stopped: chained.why, progress: p });
     }
-    return json({ started: true, resolved: batch.done, failed: batch.failed,
-                  chained: true, progress: p });
+    return json({ started: true, phase: batch.phase, resolved: batch.done,
+                  failed: batch.failed, chained: true, progress: p });
   } catch (e) {
     await release('error: ' + (e?.message || String(e)));
     return json({ started: true, error: e?.message || String(e) }, 500);

@@ -8,6 +8,7 @@
     "images": "node scripts/resolve-images.mjs",
     "images:dry": "node scripts/resolve-images.mjs --dry-run --limit=20 --verbose",
     "images:review": "node scripts/resolve-images.mjs --status=needs_review --recheck",
-    "photos:selfhost": "node scripts/fetch-photos.js --tmdb"
+    "photos:selfhost": "node scripts/fetch-photos.js --tmdb",
+    "images:webp": "node scripts/download-images.mjs"
   }
 }

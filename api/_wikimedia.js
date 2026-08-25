@@ -31,6 +31,21 @@ export const UA = process.env.WIKI_UA || ('GOATdotLOL/1.0 (' +
    press photo behind a 64px avatar is the whole problem. */
 export const BASE_THUMB_WIDTH = 320;
 
+/* The sizes we keep in our own bucket. 100 for list rows, 300 for the top of
+   a board, 800 for a person page — the three the CSS actually renders.
+   Wikimedia's thumbnailer produces them exactly, so nothing here has to
+   decode or resize an image and the deploy keeps its zero dependencies. */
+export const SELF_SIZES = [100, 300, 800];
+
+/* A Wikimedia thumbnail URL at a different width. The width lives in the file
+   name, and asking for more pixels than the source has is answered with a 400
+   rather than a 404 — hence the cap. */
+export function thumbAt(url, width, originalWidth) {
+  if (!url) return null;
+  const want = originalWidth ? Math.min(width, originalWidth) : width;
+  return url.replace(/\/(\d+)px-/, `/${Math.round(want)}px-`);
+}
+
 // Freely reusable with attribution. Everything else is skipped, fair use included.
 const OK_LICENCE = [
   /^cc0/i, /^cc[ -]by([ -]sa)?([ -][\d.]+)?/i, /public domain/i, /^pd[- ]/i,

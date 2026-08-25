@@ -45,6 +45,14 @@
      ever reaching a browser. */
   var LADDER = [160, 240, 320, 480, 640];
 
+  function selfSrcset(person) {
+    var out = [];
+    for (var i = 0; i < SELF_SIZES.length; i++) {
+      out.push(selfUrl(person, SELF_SIZES[i]) + ' ' + SELF_SIZES[i] + 'w');
+    }
+    return out.join(', ');
+  }
+
   function srcsetFor(url, originalWidth) {
     if (!url || !PX.test(url)) return null;
     var out = [], seen = {};
@@ -145,7 +153,7 @@
     /* Dimensions on the element itself. .ph is square, so the intrinsic ratio
        we declare matches the box and the reserved space is exact. */
     var ow = person.wikimedia_width || 0;
-    var set = srcsetFor(baseUrl(person), ow);
+    var set = selfFile(person) ? selfSrcset(person) : srcsetFor(baseUrl(person), ow);
     var high = opts.priority === 'high';
     var eager = high || opts.priority === 'eager';
 
@@ -173,13 +181,46 @@
       esc(person.image_status || '') + '"><img' + attrs + '>' + cap + '</div>';
   }
 
-  /* The stored thumbnail, before any resizing. A self-hosted photo_path wins
-     when one exists: it is already ours, already square, and costs no external
-     request. Otherwise the Wikimedia thumbnail. */
+  /* ------------------------------------------------------------------
+     WHERE THE BYTES COME FROM
+
+     Once a picture has been copied into our own bucket, photo_path holds just
+     the file name and three sizes exist beside each other:
+
+       photos/100/lionel-messi.jpg
+       photos/300/lionel-messi.jpg
+       photos/800/lionel-messi.jpg
+
+     One column, three files, no list to keep in sync. Until that copy has
+     happened the Wikimedia URL is used, so a board is never blank while the
+     caching pass works through 2,926 people.
+     ------------------------------------------------------------------ */
+  var SELF_SIZES = [100, 300, 800];
+
+  function selfFile(person) {
+    var p = person && person.photo_path;
+    if (!p) return null;
+    // A path with a slash in it is a literal object from the older importer.
+    return p.indexOf('/') === -1 ? p : null;
+  }
+
+  function selfUrl(person, size) {
+    var file = selfFile(person);
+    if (!file || !window.G || !window.G.photoUrl) return null;
+    var pick = SELF_SIZES[SELF_SIZES.length - 1];
+    for (var i = 0; i < SELF_SIZES.length; i++) {
+      if (SELF_SIZES[i] >= size) { pick = SELF_SIZES[i]; break; }
+    }
+    return window.G.photoUrl(pick + '/' + file);
+  }
+
+  /* The remote thumbnail, before any resizing. */
   function baseUrl(person) {
+    var G = window.G;
     if (person.photo_path) {
-      var G = window.G;
-      return (G && G.photoUrl) ? G.photoUrl(person.photo_path) : null;
+      var file = selfFile(person);
+      return file ? selfUrl(person, SELF_SIZES[0])
+                  : (G && G.photoUrl ? G.photoUrl(person.photo_path) : null);
     }
     /* Only a verified match is shown. An uncertain one is stored but withheld
        until a human approves it — attaching a maybe-wrong face to a real
@@ -189,10 +230,12 @@
   }
 
   function urlFor(person, size) {
+    // Ask for 2x the rendered box, which is what a phone actually displays.
+    var want = Math.min(800, Math.max(100, size * 2));
+    if (selfFile(person)) return selfUrl(person, want);
     var base = baseUrl(person);
     if (!base) return null;
-    // Ask for 2x the rendered box, which is what a phone actually displays.
-    return atWidth(base, Math.min(640, Math.max(160, size * 2)), person.wikimedia_width);
+    return atWidth(base, Math.min(640, Math.max(160, want)), person.wikimedia_width);
   }
 
   /* ------------------------------------------------------------------
@@ -245,7 +288,7 @@
       link.rel = 'preload';
       link.as = 'image';
       link.href = urlFor(p, e.size || 320);          // fallback for older browsers
-      var set = srcsetFor(base, p.wikimedia_width);
+      var set = selfFile(p) ? selfSrcset(p) : srcsetFor(base, p.wikimedia_width);
       if (set) {
         link.setAttribute('imagesrcset', set);
         if (e.sizes) link.setAttribute('imagesizes', e.sizes);
@@ -295,6 +338,7 @@
     poke: poke,
     markup: markup, activate: activate, preload: preload,
     urlFor: urlFor, atWidth: atWidth, srcsetFor: srcsetFor, baseUrl: baseUrl,
+    selfUrl: selfUrl, selfFile: selfFile, SELF_SIZES: SELF_SIZES,
     initials: initials, widthOf: widthOf, LADDER: LADDER
   };
 })();

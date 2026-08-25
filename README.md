@@ -230,13 +230,51 @@ retry on page load — a name that has failed three times is settled, and
 of roughly 60-75% is the realistic outcome; the rest genuinely have no freely
 licensed photograph.
 
-### Self-hosting instead (optional)
+### Self-hosting
 
-`scripts/fetch-photos.js` still copies images into the Supabase `photos`
-bucket and sets `photo_path`, which `js/img.js` prefers over the Wikimedia URL
-when present. Use it if you would rather not depend on Wikimedia's CDN at
-render time; it also reaches TMDB for actors and directors, which Commons
-covers poorly.
+Once a person is identified, the same self-running chain copies their picture
+into our own `photos` bucket at the three sizes the CSS renders:
+
+```
+photos/100/lionel-messi.jpg     list rows
+photos/300/lionel-messi.jpg     the top of a board
+photos/800/lionel-messi.jpg     a person page
+people.photo_path = 'lionel-messi.jpg'
+```
+
+One column, three files. `js/img.js` builds the size folders around the name,
+so there is no list to keep in sync, and it falls back to the Wikimedia URL for
+anyone not yet copied — a board is never blank while the pass works through
+2,926 people.
+
+No resizing happens: Wikimedia's thumbnailer produces those widths exactly, so
+the deploy keeps its zero dependencies. A download that fails counts an attempt
+and records why, and stops after three; `image_status` is untouched, because
+failing to fetch a picture is not a doubt about who someone is.
+
+**Two things worth knowing before you turn this on.**
+
+*Storage.* Three sizes across 2,926 people is roughly **300MB**, not 30MB —
+the 800px copies dominate. Supabase's free tier gives 1GB. Dropping to
+`100,300` brings it near 60MB if that matters.
+
+*Egress.* Self-hosting moves the bandwidth onto your Supabase quota, and the
+free tier is 2GB a month — a few thousand page views. Wikimedia's CDN is free
+and has no such ceiling. If the bill matters more than the control, leaving
+`photo_path` null and serving the Wikimedia URLs is a supported state, not a
+broken one.
+
+#### WebP, if you want it
+
+```bash
+npm install sharp                    # not a deploy dependency
+node scripts/download-images.mjs     # --sizes=100,300 --limit=50 --dry-run
+```
+
+The one thing that needs an image library: re-encoding to WebP, about 30%
+smaller, and cropping to a true square with `position: 'attention'` so faces
+stay centred rather than trusting `object-fit`. It writes the same layout as
+the server does, so the two are interchangeable per person.
 
 ## One thing I could not verify
 

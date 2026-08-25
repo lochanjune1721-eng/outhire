@@ -31,7 +31,13 @@ alter table people
   -- Why a resolve landed where it did, and how many times we have tried.
   -- Together these stop a failed name being retried forever.
   add column if not exists image_note     text,
-  add column if not exists image_attempts int default 0;
+  add column if not exists image_attempts int default 0,
+  -- Self-hosting: once the bytes are in our own bucket, photo_path holds the
+  -- base file name and the site builds 100/300/800 paths around it. Counted
+  -- separately from image_attempts, because failing to download a picture we
+  -- have already identified is a different problem from failing to find one.
+  add column if not exists photo_attempts int default 0,
+  add column if not exists photo_note     text;
 
 do $$ begin
   alter table people add constraint people_image_status_ck
@@ -48,6 +54,9 @@ update people set image_status = 'pending' where image_status is null;
 -- The bulk resolver's only query is "what is still outstanding", and it runs
 -- it once per batch across 2,926 rows.
 create index if not exists people_image_status_idx on people (image_status);
+-- The caching pass asks for exactly this set, every batch.
+create index if not exists people_to_cache_idx
+  on people (image_status) where photo_path is null;
 
 -- people is public-read with no column revoke, so these are readable by anon
 -- as soon as they exist. Nothing to grant.
