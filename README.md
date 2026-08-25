@@ -126,10 +126,22 @@ rendering, and nothing on the critical path waits for a search.
 
 ### Running the bulk pass
 
+**From the browser, which needs nothing installed.** Open `/admin.html`, sign in
+with `ADMIN_PASSWORD`, and press **Resolve all images**. It works through a
+batch at a time and shows a progress bar, a running tally and a live log;
+roughly twelve minutes for all 2,926. Leave the tab open. Closing it stops the
+run and pressing Resume picks up where it left off, because the progress is
+rows in the database rather than state in the page.
+
+**Or from a laptop, if you have one with the service role key on it:**
+
 ```bash
 node scripts/resolve-images.mjs --dry-run --limit=20 --verbose   # look first
 node scripts/resolve-images.mjs                                  # all of them
 ```
+
+Both call the same resolver and write the same rows; the script is faster
+because it is not paying for a round trip per batch.
 
 Eight concurrent lookups with a second between batches — about five requests a
 second, which is well inside what Wikimedia asks of bulk clients, and finishes

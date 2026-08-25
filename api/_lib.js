@@ -97,6 +97,23 @@ export async function sbFetch(path, init = {}) {
   return body;
 }
 
+/** How many rows match, without fetching them. PostgREST reports it in
+    Content-Range, which sbFetch throws away along with the rest of the
+    headers — and "how much is left to do" is a number you need often. */
+export async function count(table, query = '') {
+  const base = env('SUPABASE_URL').replace(/\/$/, '');
+  const res = await fetch(`${base}/rest/v1/${table}?${query}&select=id&limit=1`, {
+    headers: headers({ Prefer: 'count=exact' })
+  });
+  if (!res.ok) {
+    const err = new Error(`Count failed (${res.status}).`);
+    err.status = res.status;
+    throw err;
+  }
+  const total = (res.headers.get('content-range') || '').split('/')[1];
+  return total && total !== '*' ? Number(total) : null;
+}
+
 const q = encodeURIComponent;
 
 export const db = {

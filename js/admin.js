@@ -25,6 +25,7 @@
   async function open() {
     $('#login').classList.add('hide');
     $('#panel').classList.remove('hide');
+    refreshProgress();
     var cats = await G.categories();
     $('#cat').innerHTML = '<option value="">Pick a board</option>' + cats.map(function (c) {
       return '<option value="' + G.esc(c.slug) + '">' + G.esc(c.group_name || '') + ' — ' + G.esc(c.name) + '</option>';
@@ -32,6 +33,12 @@
   }
 
   $('#cat').addEventListener('change', function () { slug = this.value; load(); });
+
+  $('#img-start').addEventListener('click', function () { if (!running) resolveLoop(); });
+  $('#img-stop').addEventListener('click', function () {
+    running = false;
+    $('#img-now').textContent = 'Stopping after this batch.';
+  });
 
   /* What the Wikimedia resolver decided, and the three things you can do
      about it. An uncertain match is shown here — larger than the site would
@@ -66,6 +73,92 @@
           '</div>' +
         '</div>' +
       '</div></div>';
+  }
+
+  /* ------------------------------------------------------------------
+     RESOLVING EVERY IMAGE, FROM THIS PAGE
+
+     scripts/resolve-images.mjs does the same job faster, but it needs a
+     laptop with the service role key on it, and a site that only works if
+     somebody runs a script is a site that does not work. This loop asks the
+     server for one small batch at a time and keeps going until there is
+     nothing left; closing the tab stops it, and starting it again resumes,
+     because the progress is rows in the database rather than state here.
+     ------------------------------------------------------------------ */
+
+  var running = false;
+
+  function pct(p) {
+    var total = (p.verified || 0) + (p.needs_review || 0) + (p.missing || 0) + (p.pending || 0);
+    return total ? Math.round(((total - (p.pending || 0)) / total) * 100) : 0;
+  }
+
+  function showProgress(p) {
+    var done = pct(p);
+    $('#img-bar').style.width = done + '%';
+    $('#img-progress').innerHTML =
+      '<b style="color:var(--gold)">' + done + '%</b> · ' +
+      'with a picture <b>' + (p.verified || 0) + '</b> · ' +
+      'need a look <b>' + (p.needs_review || 0) + '</b> · ' +
+      'no free photo <b>' + (p.missing || 0) + '</b> · ' +
+      'not tried yet <b>' + (p.pending || 0) + '</b>';
+  }
+
+  function logLine(r) {
+    var colour = { verified: 'var(--gold)', needs_review: '#e8a54a',
+                   missing: 'var(--muted)', failed: '#e8836a' }[r.status] || 'var(--muted)';
+    var log = $('#img-log');
+    log.insertAdjacentHTML('afterbegin',
+      '<div><span style="color:' + colour + '">' + G.esc(r.status) + '</span> ' +
+      G.esc(r.name) + (r.note ? ' <span style="opacity:.7">— ' + G.esc(r.note) + '</span>' : '') + '</div>');
+    while (log.children.length > 120) log.removeChild(log.lastChild);
+  }
+
+  async function refreshProgress() {
+    try {
+      var r = await G.api('/api/admin', { action: 'resolve-images', token: token, size: 0, peek: true });
+      showProgress(r.progress);
+      return r.progress;
+    } catch (e) {
+      $('#img-progress').textContent = e.message;
+      return null;
+    }
+  }
+
+  async function resolveLoop() {
+    running = true;
+    $('#img-start').classList.add('hide');
+    $('#img-stop').classList.remove('hide');
+    var started = Date.now(), doneCount = 0;
+
+    while (running) {
+      var r;
+      try {
+        r = await G.api('/api/admin', { action: 'resolve-images', token: token, size: 6 });
+      } catch (e) {
+        $('#img-now').textContent = e.message;
+        break;
+      }
+      showProgress(r.progress);
+      (r.resolved || []).forEach(logLine);
+      doneCount += (r.resolved || []).length;
+
+      if (r.done) { $('#img-now').textContent = 'Finished — nothing left to resolve.'; break; }
+      if (r.stop) { $('#img-now').textContent = r.stop; break; }
+
+      var rate = doneCount / Math.max(1, (Date.now() - started) / 1000);
+      var left = rate > 0 ? Math.round((r.progress.pending || 0) / rate) : 0;
+      $('#img-now').textContent = doneCount + ' done this run · about ' +
+        Math.floor(left / 60) + 'm ' + (left % 60) + 's left · keep this tab open';
+
+      // Pace it. Wikimedia is donated infrastructure, not a CDN we pay for.
+      await new Promise(function (r2) { setTimeout(r2, 1200); });
+    }
+
+    running = false;
+    $('#img-start').classList.remove('hide');
+    $('#img-stop').classList.add('hide');
+    $('#img-start').textContent = 'Resume';
   }
 
   async function load() {

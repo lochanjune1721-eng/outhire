@@ -24,7 +24,27 @@
   <div id="panel" class="hide">
     <h1>Review</h1>
     <p class="lede">Auto-fetch gives roughly 60% usable photos and some odd name choices. Three minutes a board is the difference between a site that looks made and one that looks scraped.</p>
-    <div class="field" style="max-width:340px"><label for="cat">Board</label><select id="cat"></select></div>
+    <div class="panel" style="margin-top:18px">
+      <h2>Images</h2>
+      <p class="muted" style="font-size:13px;margin-bottom:12px">
+        Finds each contender on Wikimedia Commons once and stores the result. Runs
+        from this page — leave the tab open. Safe to stop and resume: it picks up
+        wherever it left off.
+      </p>
+      <div id="img-progress" class="muted" style="font:13px/1.6 var(--mono,monospace)">Checking…</div>
+      <div style="height:8px;background:var(--surface);border-radius:4px;overflow:hidden;margin:10px 0 14px">
+        <div id="img-bar" style="height:100%;width:0;background:var(--gold);transition:width .3s"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-gold btn-sm" type="button" id="img-start">Resolve all images</button>
+        <button class="btn btn-sm hide" type="button" id="img-stop">Stop</button>
+        <span class="muted" id="img-now" style="font-size:12px"></span>
+      </div>
+      <div id="img-log" style="margin-top:12px;max-height:220px;overflow:auto;
+           font:12px/1.7 var(--mono,monospace);color:var(--muted)"></div>
+    </div>
+
+    <div class="field" style="max-width:340px;margin-top:26px"><label for="cat">Board</label><select id="cat"></select></div>
     <div id="rows" class="panel" style="margin-top:18px"><p class="muted">Pick a board.</p></div>
   </div>
 </div></main>
