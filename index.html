@@ -25,7 +25,34 @@
       <h1>Who&#8217;s the greatest?</h1>
       <p>Every argument is free. This one isn&#8217;t. <b>Load $5, back who you believe in</b> — the board is the money, nothing else.</p>
     </div>
-    <div id="groups"><p class="empty">Loading the boards.</p></div>
+    <div class="tabrow">
+      <div class="tabs" role="tablist">
+        <button class="tab is-active" role="tab" data-view="fights" aria-selected="true">Top fights</button>
+        <button class="tab" role="tab" data-view="boards" aria-selected="false">All boards</button>
+      </div>
+      <label class="sortbox">
+        <span>Sort</span>
+        <select id="sort">
+          <option value="closest">Closest race</option>
+          <option value="hottest">Most backed</option>
+          <option value="open">Still open</option>
+          <option value="az">A–Z</option>
+        </select>
+      </label>
+    </div>
+
+    <nav id="chips" class="chiprow" aria-label="Filter by group"></nav>
+
+    <div class="sechead">
+      <h2 id="sec-title">Top fights right now</h2>
+      <span id="sec-count" class="muted"></span>
+    </div>
+
+    <div id="fights" class="fights"><p class="empty">Loading the boards.</p></div>
+    <div id="boards" class="boardgrid" hidden></div>
+    <div id="more-wrap" class="morewrap" hidden>
+      <button id="more" class="btn" type="button">Show more boards</button>
+    </div>
     <div id="unclaimed"></div>
     <section class="group" id="activity">
       <div class="group-head">

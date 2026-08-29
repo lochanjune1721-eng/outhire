@@ -15,6 +15,9 @@
   /* .tile-faces .one is fluid (flex: 1) and .two is 38% of the tile, which is
      roughly 200px and 90px in a three-column grid. aboveFold comes from the
      caller: only the opening group's first tiles get eager treatment. */
+  /* Each fighter is half the card minus the VS badge: near-full width on a
+     phone, ~430px on a wide screen. */
+  var FIGHT_SIZES = '(max-width: 640px) 42vw, (max-width: 1100px) 40vw, 430px';
   var TILE_ONE_SIZES = '(max-width: 720px) 44vw, (max-width: 1000px) 30vw, 200px';
   var TILE_TWO_SIZES = '(max-width: 720px) 24vw, (max-width: 1000px) 14vw, 90px';
 
@@ -136,54 +139,174 @@
         '</section>';
     }
 
-    // Sort groups by total money; categories within a group by recent activity,
-    // so live boards surface and dead ones sink.
+    /* View state. "Top fights" is the boxed head-to-head; "All boards" is the
+       full list so nothing is hidden behind a filter. */
+    var PAGE = 30;
+    var view = 'fights', groupFilter = 'all', sortBy = 'closest', shown = PAGE;
+
     var groups = {};
     cats.forEach(function (c) {
       var g = c.group_name || 'Other';
       (groups[g] = groups[g] || []).push(c);
     });
 
-    var ordered = Object.keys(groups).sort(function (a, b) {
-      var ga = groupTotal(groups[a], byCat), gb = groupTotal(groups[b], byCat);
-      if (gb !== ga) return gb - ga;
-      return GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b);
-    });
+    function topTwo(c) { return (byCat[c.id] || []).slice(0, 2); }
+    function potOf(c) {
+      return (byCat[c.id] || []).reduce(function (s, p) { return s + (p.total_cents || 0); }, 0);
+    }
+    function gapOf(c) {
+      var t = topTwo(c);
+      if (!t[0] || !t[1]) return Number.MAX_SAFE_INTEGER;
+      return (t[0].total_cents || 0) - (t[1].total_cents || 0);
+    }
 
-    $('#groups').innerHTML = ordered.map(function (name, gi) {
-      var first = gi === 0;
-      var list = groups[name].slice().sort(function (a, b) {
-        return lastActivity(byCat[b.id]) - lastActivity(byCat[a.id]);
+    function visibleCats() {
+      var list = cats.filter(function (c) {
+        return groupFilter === 'all' || (c.group_name || 'Other') === groupFilter;
       });
-      var total = groupTotal(groups[name], byCat);
-      return '<section class="group" id="categories">' +
-        '<div class="group-head"><h2>' + G.esc(name) + '</h2>' +
-          (total ? '<span class="total num">' + G.money(total) + '</span>' : '<span class="tile-meta">open</span>') +
+      return list.sort(function (a, b) {
+        if (sortBy === 'hottest') return potOf(b) - potOf(a);
+        if (sortBy === 'open') return potOf(a) - potOf(b);
+        if (sortBy === 'az') return String(a.name).localeCompare(String(b.name));
+        return gapOf(a) - gapOf(b);
+      });
+    }
+
+    function renderChips() {
+      var counts = {};
+      cats.forEach(function (c) {
+        var g = c.group_name || 'Other';
+        counts[g] = (counts[g] || 0) + 1;
+      });
+      var names = Object.keys(counts).sort(function (a, b) {
+        return counts[b] - counts[a] || a.localeCompare(b);
+      });
+      $('#chips').innerHTML =
+        '<button class="chip' + (groupFilter === 'all' ? ' is-active' : '') + '" data-group="all">' +
+          'All <span class="chip-n">' + cats.length + '</span></button>' +
+        names.map(function (g) {
+          return '<button class="chip' + (groupFilter === g ? ' is-active' : '') +
+            '" data-group="' + G.esc(g) + '">' + G.esc(g) +
+            ' <span class="chip-n">' + counts[g] + '</span></button>';
+        }).join('');
+    }
+
+    /* One fighter: the face through G.photo so it uses the resolved Wikimedia
+       thumbnail, the name, and the money. */
+    function fighter(p, side, aboveFold) {
+      if (!p) {
+        return '<div class="fighter is-empty"><span class="fighter-photo"></span>' +
+          '<span class="fighter-name">Open</span>' +
+          '<span class="fighter-score num">' + G.money(0) + '</span>' +
+          '<span class="fighter-label">backed</span></div>';
+      }
+      return '<a class="fighter" href="/person.html?slug=' + G.esc(p.slug || '') + '">' +
+        '<span class="fighter-photo">' +
+          G.photo(p, { caption: p.name, size: 400, sizes: FIGHT_SIZES,
+                       priority: aboveFold ? (side === 'a' ? 'high' : 'eager') : 'lazy' }) +
+        '</span>' +
+        '<span class="fighter-name">' + G.esc(p.name) + '</span>' +
+        '<span class="fighter-score num">' + G.money(p.total_cents || 0) + '</span>' +
+        '<span class="fighter-label">backed</span>' +
+      '</a>';
+    }
+
+    function fightCard(c, aboveFold) {
+      var t = topTwo(c), a = t[0], b = t[1];
+      var at = (a && a.total_cents) || 0, bt = (b && b.total_cents) || 0;
+      var sum = at + bt;
+      var pct = sum > 0 ? Math.round((at / sum) * 100) : 50;
+
+      var foot;
+      if (!a) foot = 'Nobody here yet — <b>$1</b> puts someone at #1';
+      else if (!at) foot = '<b>#1 is open</b> — $1 takes it';
+      else if (!b) foot = '<b>' + G.esc(a.name) + '</b> is unopposed';
+      else if (at === bt) foot = 'Dead level — <b>$1</b> breaks the tie';
+      else foot = '<b>' + G.esc(a.name) + '</b> leads by <b class="num">' + G.money(at - bt) + '</b>';
+
+      return '<article class="fight">' +
+        '<header class="fight-head">' +
+          '<h3><a href="/category.html?slug=' + G.esc(c.slug) + '">' + G.esc(c.name) + '</a></h3>' +
+          '<span class="fight-tag">' + G.esc(c.group_name || '') + '</span>' +
+        '</header>' +
+        '<div class="fight-body">' +
+          fighter(a, 'a', aboveFold) +
+          '<span class="vs" aria-hidden="true">VS</span>' +
+          fighter(b, 'b', aboveFold) +
         '</div>' +
-        '<div class="tiles">' + list.map(function (c, ci) {
-          /* Only the opening group's first few tiles are above the fold on a
-             normal screen. Marking more than that as eager would fetch a
-             hundred faces to show six. */
-          return tile(c, (byCat[c.id] || []).slice(0, 2), first && ci < 3);
-        }).join('') + '</div>' +
-      '</section>';
-    }).join('');
+        '<div class="fight-bar"><span style="width:' + pct + '%"></span></div>' +
+        '<p class="fight-foot">' + foot + '</p>' +
+      '</article>';
+    }
+
+    function boardCard(c) {
+      var t = topTwo(c), lead = t[0];
+      return '<a class="board" href="/category.html?slug=' + G.esc(c.slug) + '">' +
+        '<span class="board-meta">' +
+          '<span class="board-name">' + G.esc(c.name) + '</span>' +
+          '<span class="board-sub">' + G.esc(c.group_name || '') + '</span>' +
+          '<span class="board-lead">' + (lead ? G.esc(lead.name) : 'Unclaimed — $1 takes #1') + '</span>' +
+        '</span>' +
+        '<span class="board-pot num">' + G.money(potOf(c)) + '</span>' +
+      '</a>';
+    }
+
+    function render() {
+      var list = visibleCats();
+      var slice = list.slice(0, shown);
+
+      $('#sec-title').textContent = view === 'fights' ? 'Top fights right now' : 'All boards';
+      $('#sec-count').textContent = list.length ? slice.length + ' of ' + list.length : '';
+      $('#fights').hidden = view !== 'fights';
+      $('#boards').hidden = view !== 'boards';
+
+      if (view === 'fights') {
+        $('#fights').innerHTML = slice.map(function (c, i) { return fightCard(c, i < 2); }).join('');
+        window.GImg.activate($('#fights'));
+      } else {
+        $('#boards').innerHTML = slice.map(boardCard).join('');
+      }
+      $('#more-wrap').hidden = slice.length >= list.length;
+    }
+
+    $('#chips').addEventListener('click', function (e) {
+      var chip = e.target.closest('.chip');
+      if (!chip) return;
+      groupFilter = chip.dataset.group; shown = PAGE;
+      renderChips(); render();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (tab) {
+      tab.addEventListener('click', function () {
+        view = tab.dataset.view; shown = PAGE;
+        Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (t) {
+          var on = t === tab;
+          t.classList.toggle('is-active', on);
+          t.setAttribute('aria-selected', String(on));
+        });
+        render();
+      });
+    });
+    $('#sort').addEventListener('change', function (e) {
+      sortBy = e.target.value; shown = PAGE; render();
+    });
+    $('#more').addEventListener('click', function () { shown += PAGE; render(); });
+
+    renderChips();
+    render();
 
     /* Nothing is fetched or resolved here — every tile already carries its
        thumbnail URL. This starts the observers and preloads the two faces on
        the very first tile, which are the only images certain to be above the
        fold on every screen size. */
-    window.GImg.activate($('#groups'));
     imageBanner();
     // If anybody is still unresolved, start the server working on it. Once per
     // session, not awaited, and nothing on this page depends on it.
     window.GImg.poke(people);
-    var first = ordered.length ? groups[ordered[0]] : null;
-    var lead = first && first.length ? (byCat[first[0].id] || []).slice(0, 2) : [];
+    var firstCat = visibleCats()[0];
+    var lead = firstCat ? topTwo(firstCat) : [];
     if (lead.length) {
       window.GImg.preload(lead.map(function (p, i) {
-        return i ? { person: p, size: 90, sizes: TILE_TWO_SIZES }
-                 : { person: p, size: 200, sizes: TILE_ONE_SIZES };
+        return { person: p, size: 400, sizes: FIGHT_SIZES };
       }));
     }
   }
@@ -200,7 +323,7 @@
      So it says so, on the page, in the one place you cannot miss.
      ------------------------------------------------------------------ */
   async function imageBanner() {
-    var host = $('#groups');
+    var host = $('#fights');
     if (!host || document.getElementById('img-banner')) return;
     var r;
     try { r = await (await fetch('/api/images')).json(); } catch (e) { return; }
