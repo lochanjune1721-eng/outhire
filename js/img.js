@@ -239,10 +239,13 @@
       return file ? selfUrl(person, SELF_SIZES[0])
                   : (G && G.photoUrl ? G.photoUrl(person.photo_path) : null);
     }
-    /* Only a verified match is shown. An uncertain one is stored but withheld
-       until a human approves it — attaching a maybe-wrong face to a real
-       person is worse than showing initials. */
-    if (person.image_status !== 'verified') return null;
+    /* Show the picture we have. The resolver marks a match it could not fully
+       confirm as needs_review and stores the thumbnail anyway; withholding
+       those meant a database full of portraits rendered as initials, which
+       reads as a broken site rather than a careful one. Only 'missing' — no
+       free photo exists — falls back to initials. Anything doubtful can still
+       be corrected in /admin.html. */
+    if (person.image_status === 'missing') return null;
     return person.wikimedia_thumbnail_url || null;
   }
 

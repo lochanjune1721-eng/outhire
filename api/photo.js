@@ -248,10 +248,11 @@ export default webHandler(async function handler(request) {
       try {
         const person = await load(slug);
         if (person) {
-          let url = person.image_status === 'verified' ? person.wikimedia_thumbnail_url : null;
+          // Anything already stored is good enough to serve; only 'missing' has nothing.
+          let url = person.image_status === 'missing' ? null : person.wikimedia_thumbnail_url;
           if (!url && (person.image_attempts || 0) < MAX_ATTEMPTS) {
             const result = await resolveAndStore(person, []);
-            url = result.image_status === 'verified' ? result.image_url : null;
+            url = result.image_status === 'missing' ? null : result.image_url;
           }
           if (url) {
             return new Response(null, {
@@ -308,7 +309,7 @@ export default webHandler(async function handler(request) {
        a contender is looked up on Wikimedia once, ever, and every later
        request is answered out of Postgres. */
     if (!force) {
-      if (person.wikimedia_thumbnail_url && person.image_status === 'verified') {
+      if (person.wikimedia_thumbnail_url && person.image_status !== 'missing') {
         return json(payload(person, { cached: true }));
       }
       // A settled answer is still an answer — including an uncertain match a
