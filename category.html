@@ -5,7 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Board — GOAT.lol</title>
 <meta name="theme-color" content="#0F0E0C">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><link rel="stylesheet" href="/css/style.css">
+<!-- The three hosts every page talks to. Opening the sockets during head
+     parse means the first real request is not also paying for DNS and TLS. -->
+<link rel="preconnect" href="https://lbxpatuwptkgmugpuezs.supabase.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- supabase-js is the last script in the body, so the parser would only
+     start fetching it after the whole page. Start it here instead; no
+     crossorigin, to match the plain <script src> that consumes it. -->
+<link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">
+<link rel="stylesheet" href="/css/style.css">
+<!-- Webfonts must never hold up the first paint. media="print" takes this
+     off the render-blocking path; onload puts it back the moment it lands. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600&display=swap"></noscript>
 </head>
 <body data-nav="categories">
 <a class="skip" href="#main">Skip to content</a>
