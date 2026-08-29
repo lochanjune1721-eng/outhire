@@ -89,6 +89,13 @@
           .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at' + extra)
           .order('total_cents', { ascending: false })
           .order('first_backed_at', { ascending: true, nullsFirst: false })
+          /* Without these two the sort is fully tied while every board is at
+             $0, and a tied ORDER BY gives no stable order across separate
+             range() pages — rows come back twice and others never arrive at
+             all. That is why boards showed contenders 11 and 13 rather than
+             1 and 2. A unique final key makes the paging total. */
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
           .range(page * PAGE, page * PAGE + PAGE - 1);
       });
       if (chunk.error) throw chunk.error;
@@ -234,7 +241,20 @@
     var af = a.first_backed_at ? Date.parse(a.first_backed_at) : Infinity;
     var bf = b.first_backed_at ? Date.parse(b.first_backed_at) : Infinity;
     if (af !== bf) return af - bf;
-    return Date.parse(a.created_at) - Date.parse(b.created_at);
+
+    /* Nothing backed yet, so money cannot separate them. Fall back to the
+       order the board was written in, which is the order in goat-data.js:
+       Greatest Footballer opens Messi then Ronaldo, not whoever the database
+       returned first. Real backing still overrides all of this. */
+    var order = window.GOAT_SEED_ORDER || {};
+    var ao = order[a.slug], bo = order[b.slug];
+    if (ao !== undefined && bo !== undefined && ao !== bo) return ao - bo;
+    if (ao !== undefined && bo === undefined) return -1;
+    if (bo !== undefined && ao === undefined) return 1;
+
+    var ac = Date.parse(a.created_at), bc = Date.parse(b.created_at);
+    if (ac !== bc) return (ac || 0) - (bc || 0);
+    return String(a.slug || '').localeCompare(String(b.slug || ''));
   }
 
   function groupTotal(cats, byCat) {

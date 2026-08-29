@@ -154,6 +154,8 @@
         .order('total_cents', { ascending: false })
         .order('first_backed_at', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: true })
+        // Unique final key: without one, paging a tied sort can repeat and skip rows.
+        .order('id', { ascending: true })
         .range(offset || 0, (offset || 0) + (limit || 100) - 1);
     });
     if (r.error) throw r.error;
