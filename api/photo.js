@@ -17,7 +17,7 @@
  *   POST /api/photo {slug, force:true}   re-check one that already has an answer
  */
 import { webHandler, json, bad, readJson, db, sbFetch } from './_lib.js';
-import { resolveImage, imageRow, BASE_THUMB_WIDTH, UA } from './_wikimedia.js';
+import { resolveImage, imageRow, BASE_THUMB_WIDTH, UA, thumbAt } from './_wikimedia.js';
 
 const PICK = 'id,slug,name,wikipedia_url,photo_path,wikimedia_thumbnail_url,' +
              'wikimedia_file_title,wikimedia_page_url,wikimedia_original_url,' +
@@ -39,6 +39,25 @@ function payload(p, extra = {}) {
     why: p.image_note || null,
     ...extra
   };
+}
+
+/* The face of last resort, when no free photo exists or the lookup fails.
+   Drawn here rather than left to the browser so an <img> pointing at this
+   endpoint always renders something. */
+function monogram(slug) {
+  const words = String(slug || '').split('-').filter(Boolean);
+  const letters = (words.length > 1
+    ? words[0][0] + words[words.length - 1][0]
+    : (words[0] || '?').slice(0, 2)).toUpperCase()
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">' +
+    '<rect width="100%" height="100%" fill="#1A1815"/>' +
+    '<text x="50%" y="54%" font-family="system-ui,-apple-system,sans-serif" font-weight="700"' +
+    ' font-size="150" fill="#D4A24C" text-anchor="middle" dominant-baseline="middle">' + letters + '</text></svg>';
+  return new Response(svg, {
+    status: 200,
+    headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, s-maxage=86400' }
+  });
 }
 
 /* Give up on a name after enough tries. Without this, ten thousand page views
@@ -216,7 +235,40 @@ async function load(slug) {
 
 export default webHandler(async function handler(request) {
   if (request.method === 'GET') {
-    const slug = new URL(request.url).searchParams.get('slug');
+    const params = new URL(request.url).searchParams;
+    const slug = params.get('slug');
+
+    /* ?as=image — answer with the picture itself, so a plain <img src> can point
+       here. This is what the pages use for anyone the bulk pass has not reached
+       yet: the face arrives on this visit rather than the next one, and the
+       answer is cached on the row on the way past. Edge-cached, so a name is
+       resolved once and then served from the CDN. */
+    if (slug && params.get('as') === 'image') {
+      const want = Math.min(800, Math.max(160, Number(params.get('w')) || 320));
+      try {
+        const person = await load(slug);
+        if (person) {
+          let url = person.image_status === 'verified' ? person.wikimedia_thumbnail_url : null;
+          if (!url && (person.image_attempts || 0) < MAX_ATTEMPTS) {
+            const result = await resolveAndStore(person, []);
+            url = result.image_status === 'verified' ? result.image_url : null;
+          }
+          if (url) {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                Location: thumbAt(url, want, person.wikimedia_width) || url,
+                'Cache-Control': 'public, s-maxage=2592000, stale-while-revalidate=86400'
+              }
+            });
+          }
+        }
+      } catch (e) {
+        /* fall through to the monogram — a broken face is worse than a plain one */
+      }
+      return monogram(slug);
+    }
+
     if (!slug) return json(await diagnose());
     /* One URL you can paste into the address bar that runs the real thing.
        A POST-only trace is no use to someone holding a browser. */

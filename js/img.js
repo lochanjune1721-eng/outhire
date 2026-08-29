@@ -145,6 +145,23 @@
     var url = urlFor(person, size);
 
     if (!url) {
+      /* Nothing stored yet. Rather than showing initials and waiting for a
+         background pass, ask the server for this one face now: /api/photo
+         answers with the image itself, resolving and caching it on the way, so
+         the picture appears on this visit instead of the next one. Initials
+         remain the fallback if that fails, via onerror. */
+      if (person.slug && person.image_status !== 'missing') {
+        var live = '/api/photo?as=image&w=' + Math.min(800, Math.max(160, size * 2)) +
+                   '&slug=' + encodeURIComponent(person.slug);
+        var liveEager = opts.priority === 'high' || opts.priority === 'eager';
+        return '<div class="' + cls + '"' + mark + ' data-image-status="live">' +
+          '<img alt="' + esc(person.name || '') + '"' +
+          ' width="' + size + '" height="' + size + '" decoding="async"' +
+          ' data-i="' + esc(initials(person.name)) + '"' +
+          (liveEager ? ' loading="eager" src="' + esc(live) + '"'
+                     : ' loading="lazy" data-src="' + esc(live) + '"') +
+          '>' + cap + '</div>';
+      }
       return '<div class="' + cls + '"' + mark + ' data-image-status="' +
         esc(person.image_status || 'pending') + '">' +
         '<div class="initials">' + esc(initials(person.name)) + '</div>' + cap + '</div>';
