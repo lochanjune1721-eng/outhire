@@ -91,23 +91,13 @@
         '<b>$1 takes #1.</b></p>';
       return;
     }
-    var fansByPerson = {};
-    try {
-      var ids = rows.map(function (r) { return r.id; });
-      var res = await G.sb.from('fan_totals')
-        .select('person_id,total_cents,users(display_name,is_anonymous)')
-        .in('person_id', ids)
-        .order('total_cents', { ascending: false });
-      (res.data || []).forEach(function (f) {
-        (fansByPerson[f.person_id] = fansByPerson[f.person_id] || []).push(f);
-      });
-    } catch (e) { /* strips fall back to "no backers yet" */ }
 
+    /* Paint the board first. The backer strips are a second query, and
+       waiting for it before writing any HTML meant every board — cached rows
+       included — sat blank for a whole round trip to show three handles.
+       They go in below, into the slot each row already has for them. */
     host.innerHTML = rows.map(function (p, i) {
-      return rowMarkup(p, startRank + i, {
-        fans: fansByPerson[p.id],
-        stakes: stakes(rows, i)
-      });
+      return rowMarkup(p, startRank + i, { stakes: stakes(rows, i) });
     }).join('');
     bind(host, rows);
     window.GImg.activate(host);
@@ -120,6 +110,27 @@
         return { person: p, size: TIER_SIZE[t], sizes: TIER_SIZES[t] };
       }));
     }
+
+    var fansByPerson = {};
+    try {
+      var ids = rows.map(function (r) { return r.id; });
+      var res = await G.sb.from('fan_totals')
+        .select('person_id,total_cents,users(display_name,is_anonymous)')
+        .in('person_id', ids)
+        .order('total_cents', { ascending: false });
+      (res.data || []).forEach(function (f) {
+        (fansByPerson[f.person_id] = fansByPerson[f.person_id] || []).push(f);
+      });
+    } catch (e) { return; }   // strips stay at "no backers yet"
+
+    /* The board may already have been redrawn underneath us — a later page,
+       or fresh rows landing over a cached paint. Only fill a slot that is
+       still the row this answer was asked about. */
+    Object.keys(fansByPerson).forEach(function (id) {
+      var row = host.querySelector('[data-person="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      var slot = row && row.querySelector('[data-fans]');
+      if (slot) slot.innerHTML = fanStrip(fansByPerson[id]);
+    });
   }
 
   /* ------------------------------------------------------------------

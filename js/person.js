@@ -4,21 +4,16 @@
   var G = window.G, B = window.GBoard;
   var host = document.getElementById('person');
 
-  async function boot() {
-    if (G.OFFLINE) { host.innerHTML = '<p class="empty">' + G.esc(G.offlineMessage()) + '</p>'; return; }
-    var slug = G.qs('slug');
-    var p = slug ? await G.person(slug) : null;
-    if (!p) { host.innerHTML = '<p class="empty">Nobody at that address. <a href="/">See the boards</a>.</p>'; return; }
+  // The person currently on screen. The click handler is bound once, against
+  // the page rather than a particular row, and reads this.
+  var current = null;
+  var bound = false;
 
+  function paint(p, cat, rank, fans) {
+    current = p;
     document.title = p.name + ' — GOAT.lol';
-    var cat = p.categories || {};
-
-    var rankRes = await G.sb.from('people').select('id', { count: 'exact', head: true })
-      .eq('category_id', p.category_id).gt('total_cents', p.total_cents);
-    var rank = (rankRes.count || 0) + 1;
-
-    var fans = await G.fansOf(p.id, 100);
     var wiki = G.safeUrl(p.wikipedia_url);
+    cat = cat || {};
 
     host.innerHTML =
       '<div class="person">' +
@@ -54,7 +49,7 @@
 
           '<div class="panel" style="margin-top:26px">' +
             '<h2>Top fans</h2>' +
-            '<ul class="fanlist" id="fanlist">' + fanRows(fans) + '</ul>' +
+            '<ul class="fanlist" id="fanlist">' + fanRows(fans || []) + '</ul>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -62,7 +57,50 @@
     /* Nothing to resolve: the row arrived with its thumbnail URL. This only
        binds the fallback and starts any below-fold observers on the page. */
     window.GImg.activate(host);
+    bindOnce();
+  }
 
+  async function boot() {
+    if (G.OFFLINE) { host.innerHTML = '<p class="empty">' + G.esc(G.offlineMessage()) + '</p>'; return; }
+    var slug = G.qs('slug');
+    if (!slug) { host.innerHTML = '<p class="empty">Nobody at that address. <a href="/">See the boards</a>.</p>'; return; }
+
+    /* Whoever browsed the home page already downloaded this person. Draw the
+       portrait, the total and the rank from that, then ask the database. */
+    var snap = G.snapshot(), painted = false;
+    if (snap) {
+      var hit = snap.people.filter(function (x) { return x.slug === slug; })[0];
+      if (hit) {
+        var cat = snap.cats.filter(function (c) { return c.id === hit.category_id; })[0];
+        var ahead = snap.people.filter(function (x) {
+          return x.category_id === hit.category_id && x.total_cents > hit.total_cents;
+        }).length;
+        paint(hit, cat, ahead + 1, null);
+        painted = true;
+      }
+    }
+
+    var p = await G.person(slug);
+    if (!p) {
+      if (!painted) host.innerHTML = '<p class="empty">Nobody at that address. <a href="/">See the boards</a>.</p>';
+      return;
+    }
+
+    /* The rank and the fan list both need the person's id and neither needs
+       the other, so they go together. Asking for them in turn cost a whole
+       round trip for nothing. */
+    var pair = await Promise.all([
+      G.sb.from('people').select('id', { count: 'exact', head: true })
+        .eq('category_id', p.category_id).gt('total_cents', p.total_cents),
+      G.fansOf(p.id, 100)
+    ]);
+
+    paint(p, p.categories || {}, (pair[0].count || 0) + 1, pair[1]);
+  }
+
+  function bindOnce() {
+    if (bound) return;
+    bound = true;
     host.addEventListener('click', async function (e) {
       var step = e.target.closest('[data-step]');
       if (step) {
@@ -74,6 +112,8 @@
       }
       var back = e.target.closest('[data-back-person]');
       if (!back) return;
+      var p = current;
+      if (!p || !p.id) return B.toast('Still loading — try again in a second.');
       var dollars = parseInt(host.querySelector('[data-amt]').textContent.replace(/\D/g, ''), 10) || 1;
       if (!G.me) return B.toast('Sign in to back someone.', '/wallet.html', 'Sign in');
       if (G.me.balance_cents < dollars * 100) {

@@ -439,6 +439,38 @@
       '</div></div>';
   }
 
+  /* ------------------------------ snapshot --------------------------------
+
+     Every board and every contender from the last visit, kept in
+     localStorage. It is what makes the second visit — and a click from the
+     home page through to a board — paint before a single request has gone
+     out. The network still runs on every load; whatever comes back replaces
+     what is on screen. Nothing here is ever the source of truth, so a stale
+     or missing snapshot only costs the head start. */
+  var SNAP_KEY = 'goat_snapshot_v1';
+
+  function snapshot() {
+    try {
+      var raw = localStorage.getItem(SNAP_KEY);
+      if (!raw) return null;
+      var s = JSON.parse(raw);
+      if (!s || !s.cats || !s.cats.length || !s.people || !s.people.length) return null;
+      return s;
+    } catch (e) { return null; }
+  }
+
+  /* Written when the browser is next idle: serialising three thousand rows
+     is not something to do on the frame that just painted them. */
+  function saveSnapshot(cats, people) {
+    var save = function () {
+      try {
+        localStorage.setItem(SNAP_KEY, JSON.stringify({ at: Date.now(), cats: cats, people: people }));
+      } catch (e) { /* quota, or private mode. The page works without it. */ }
+    };
+    if (window.requestIdleCallback) window.requestIdleCallback(save, { timeout: 2000 });
+    else setTimeout(save, 0);
+  }
+
   function boot() {
     mountHeader(document.body.getAttribute('data-nav'));
     mountFooter();
@@ -458,6 +490,7 @@
     explain: explain, showError: showError, offlineMessage: offlineMessage,
     onMe: onMe, refreshMe: refreshMe, signIn: signIn, signOut: signOut, get me() { return ME; },
     placeBid: placeBid, addPerson: addPerson, setProfile: setProfile, api: api,
-    withImageCols: withImageCols, PCOLS: PCOLS
+    withImageCols: withImageCols, PCOLS: PCOLS,
+    snapshot: snapshot, saveSnapshot: saveSnapshot
   };
 })();

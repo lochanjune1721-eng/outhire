@@ -73,40 +73,66 @@
     '</a>';
   }
 
+  /* The columns every other page selects, so the snapshot this page writes
+     is a drop-in for the board pages too rather than a trimmed copy that
+     only the home page can read. */
+  var COLS = G.PCOLS;
+
+  /* Every page at once. The old loop awaited page 0, then page 1, then page 2,
+     so three thousand rows cost three round trips end to end before anything
+     could be drawn. Nothing about them is ordered, so they all go together —
+     alongside the categories, which used to be a fourth wait of its own. */
+  function fetchPeople() {
+    var PAGE = 1000, PAGES = 6;
+    var reqs = [];
+    for (var i = 0; i < PAGES; i++) {
+      (function (page) {
+        reqs.push(G.withImageCols(function (extra) {
+          return G.sb.from('people')
+            .select(COLS + extra)
+            .order('total_cents', { ascending: false })
+            .order('first_backed_at', { ascending: true, nullsFirst: false })
+            /* A tied ORDER BY has no stable order across separate range()
+               pages, so rows came back twice and others never arrived. A
+               unique final key makes the paging total — and it has to hold
+               now that the pages are fetched together rather than in turn. */
+            .order('created_at', { ascending: true })
+            .order('id', { ascending: true })
+            .range(page * PAGE, page * PAGE + PAGE - 1);
+        }));
+      })(i);
+    }
+    return Promise.all(reqs).then(function (chunks) {
+      var out = [];
+      chunks.forEach(function (c) { if (c && c.data) out = out.concat(c.data); });
+      return out;
+    });
+  }
+
   async function loadBoards() {
-    var cats = await G.categories();
+    var snap = G.snapshot();
+    var painted = false;
+
+    if (snap && snap.cats.length && snap.people.length) {
+      draw(snap.cats, snap.people);      // no request has gone out yet
+      painted = true;
+    }
+
+    var pair = await Promise.all([G.categories(), fetchPeople()]);
+    var cats = pair[0], people = pair[1];
+
     if (!cats.length) {
-      $('#groups').innerHTML = '<p class="empty">No boards yet. Run <b>sql/schema.sql</b> and then <b>scripts/seed.js</b>.</p>';
+      if (!painted) $('#fights').innerHTML = '<p class="empty">No boards yet. Run <b>sql/schema.sql</b> and then <b>scripts/seed.js</b>.</p>';
       return;
     }
 
-    /* One query for every person, then group in memory. Sixty-five separate
-       top-two queries would be sixty-five round trips. */
-    /* Supabase caps a response at 1000 rows by default and reports it as a
-       partial Content-Range, not an error — so 2926 people came back as 1000
-       with nothing to indicate the rest were missing. Page until exhausted. */
-    var people = [], page = 0, PAGE = 1000;
-    for (;;) {
-      var chunk = await G.withImageCols(function (extra) {
-        return G.sb.from('people')
-          .select('id,slug,name,photo_path,category_id,total_cents,first_backed_at,created_at' + extra)
-          .order('total_cents', { ascending: false })
-          .order('first_backed_at', { ascending: true, nullsFirst: false })
-          /* Without these two the sort is fully tied while every board is at
-             $0, and a tied ORDER BY gives no stable order across separate
-             range() pages — rows come back twice and others never arrive at
-             all. That is why boards showed contenders 11 and 13 rather than
-             1 and 2. A unique final key makes the paging total. */
-          .order('created_at', { ascending: true })
-          .order('id', { ascending: true })
-          .range(page * PAGE, page * PAGE + PAGE - 1);
-      });
-      if (chunk.error) throw chunk.error;
-      people = people.concat(chunk.data || []);
-      if (!chunk.data || chunk.data.length < PAGE) break;
-      page++;
-      if (page > 20) break;   // hard stop; nothing legitimate needs 20k rows
-    }
+    G.saveSnapshot(cats, people);
+    draw(cats, people);
+  }
+
+  var bound = false;
+
+  function draw(cats, people) {
     var res = { data: people };
 
     var byCat = {};
@@ -269,6 +295,8 @@
       $('#more-wrap').hidden = slice.length >= list.length;
     }
 
+    if (!bound) {
+    bound = true;
     $('#chips').addEventListener('click', function (e) {
       var chip = e.target.closest('.chip');
       if (!chip) return;
@@ -290,6 +318,7 @@
       sortBy = e.target.value; shown = PAGE; render();
     });
     $('#more').addEventListener('click', function () { shown += PAGE; render(); });
+    }
 
     renderChips();
     render();
